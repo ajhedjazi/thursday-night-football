@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - bookings</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <section class="card" style="max-width: 800px;">
+      <h1>Bookings admin</h1>
+
+      <label>
+        Admin password
+        <input type="password" id="admin-password" />
+      </label>
+
+      <button id="load-btn" type="button">Load bookings</button>
+
+      <p id="summary"></p>
+      <div id="results"></div>
+    </section>
+  </main>
+
+  <script>
+    const loadBtn = document.getElementById("load-btn");
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+
+    loadBtn.addEventListener("click", async () => {
+      results.innerHTML = "";
+      summary.textContent = "";
+
+      const password = document.getElementById("admin-password").value;
+
+      const res = await fetch("/api/admin/bookings", {
+        headers: {
+          "x-admin-password": password
+        }
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        summary.textContent = data.error || "Failed to load.";
+        return;
+      }
+
+      summary.textContent = `${data.session.booked}/${data.session.capacity} booked. ${data.session.remaining} spaces left.`;
+
+      if (!data.bookings.length) {
+        results.innerHTML = "<p>No bookings yet.</p>";
+        return;
+      }
+
+      const rows = data.bookings.map((b) => `
+        <tr>
+          <td>${b.customer_name}</td>
+          <td>${b.customer_email}</td>
+          <td>${b.customer_phone || ""}</td>
+          <td>${b.created_at}</td>
+        </tr>
+      `).join("");
+
+      results.innerHTML = `
+        <table style="width:100%; border-collapse: collapse; margin-top: 16px;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Name</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Email</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Phone</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Booked at</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Book your spot</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <div class="eyebrow">Player booking</div>
+      <h1 id="title">Thursday 7pm Kickabout</h1>
+      <p id="meta" class="meta">Loading session details…</p>
+      <p id="availability" class="availability"></p>
+
+      <form id="booking-form">
+        <label>
+          Name
+          <input type="text" id="name" name="name" required />
+        </label>
+
+        <label>
+          Email
+          <input type="email" id="email" name="email" required />
+        </label>
+
+        <label>
+          Phone <span class="optional">(optional)</span>
+          <input type="text" id="phone" name="phone" />
+        </label>
+
+        <button id="submit-btn" type="submit">Book & Pay</button>
+      </form>
+
+      <p class="small">Secure payment via Stripe</p>
+      <p id="message" class="message"></p>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
