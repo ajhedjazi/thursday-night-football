@@ -54,28 +54,41 @@
         return;
       }
 
-      const rows = data.bookings.map((b) => `
-        <tr>
-          <td>${b.customer_name}</td>
-          <td>${b.customer_email}</td>
-          <td>${b.customer_phone || ""}</td>
-          <td>${b.created_at}</td>
-        </tr>
-      `).join("");
+const rows = data.bookings.map((b) => {
+  let guests = [];
+  try {
+    guests = JSON.parse(b.guest_names || "[]");
+  } catch (e) {
+    guests = [];
+  }
 
-      results.innerHTML = `
-        <table style="width:100%; border-collapse: collapse; margin-top: 16px;">
-          <thead>
-            <tr>
-              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Name</th>
-              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Email</th>
-              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Phone</th>
-              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Booked at</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      `;
+  return `
+    <tr>
+      <td>${b.customer_name}</td>
+      <td>${b.customer_email}</td>
+      <td>${b.customer_phone || ""}</td>
+      <td>${b.player_count}</td>
+      <td>${guests.join(", ")}</td>
+      <td>${b.created_at}</td>
+    </tr>
+  `;
+}).join("");
+
+    results.innerHTML = `
+      <table style="width:100%; border-collapse: collapse; margin-top: 16px;">
+        <thead>
+          <tr>
+            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Booked by</th>
+            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Email</th>
+            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Phone</th>
+            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Players</th>
+            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Guest names</th>
+            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Booked at</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
     });
   </script>
 </body>
