@@ -17,16 +17,38 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "changeme123";
 
 // Change this to your actual session/game details
-const SESSION = {
-  id: "thursday-7pm",
-  title: "Thursday 7pm Kickabout",
-  description: "12 spaces • Astro • 7:00pm",
-  location: "Goals / Astro Centre",
-  date: "2026-04-23",
-  time: "19:00",
-  pricePence: 500,
-  capacity: 12
-};
+const DEFAULT_SESSIONS = [
+  {
+    id: "thursday-2026-04-23",
+    title: "Thursday 7pm Kickabout",
+    date: "2026-04-23",
+    time: "19:00",
+    location: "Goals / Astro Centre",
+    pricePence: 500,
+    capacity: 12,
+    status: "open"
+  },
+  {
+    id: "thursday-2026-04-30",
+    title: "Thursday 7pm Kickabout",
+    date: "2026-04-30",
+    time: "19:00",
+    location: "Goals / Astro Centre",
+    pricePence: 500,
+    capacity: 12,
+    status: "open"
+  },
+  {
+    id: "thursday-2026-05-07",
+    title: "Thursday 7pm Kickabout",
+    date: "2026-05-07",
+    time: "19:00",
+    location: "Goals / Astro Centre",
+    pricePence: 500,
+    capacity: 12,
+    status: "open"
+  }
+];
 
 // -----------------------------
 // Database
@@ -48,6 +70,32 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+const insertSessionStmt = db.prepare(`
+  INSERT OR IGNORE INTO sessions (
+    id,
+    title,
+    date,
+    time,
+    location,
+    price_pence,
+    capacity,
+    status
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+for (const s of DEFAULT_SESSIONS) {
+  insertSessionStmt.run(
+    s.id,
+    s.title,
+    s.date,
+    s.time,
+    s.location,
+    s.pricePence,
+    s.capacity,
+    s.status
+  );
+}
 
 try {
   db.exec(`ALTER TABLE bookings ADD COLUMN player_count INTEGER NOT NULL DEFAULT 1;`);
@@ -87,6 +135,27 @@ const listBookingsStmt = db.prepare(`
   FROM bookings
   WHERE session_id = ?
   ORDER BY created_at DESC
+`);
+
+const getNextOpenSessionStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  WHERE status = 'open'
+  ORDER BY date ASC, time ASC
+  LIMIT 1
+`);
+
+const getSessionByIdStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  WHERE id = ?
+`);
+
+const listOpenSessionsStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  WHERE status = 'open'
+  ORDER BY date ASC, time ASC
 `);
 
 // -----------------------------
@@ -222,9 +291,44 @@ app.use(express.static(path.join(__dirname, "public")));
 // -----------------------------
 // Helpers
 // -----------------------------
-function getAvailability() {
-  const booked = countConfirmedBookingsStmt.get(SESSION.id).count;
-  const remaining = Math.max(SESSION.capacity - booked, 0);
+function mapSessionRow(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    title: row.title,
+    date: row.date,
+    time: row.time,
+    location: row.location,
+    pricePence: row.price_pence,
+    capacity: row.capacity,
+    status: row.status,
+    description: `${row.capacity} spaces • ${row.location} • ${row.time}`
+  };
+}
+
+function getAvailabilityForSession(sessionId) {
+  const row = getSessionByIdStmt.get(sessionId);
+  const session = mapSessionRow(row);
+
+  if (!session) return null;
+
+  const booked = countConfirmedBookingsStmt.get(session.id).count;
+  const remaining = Math.max(session.capacity - booked, 0);
+
+  return {
+    ...session,
+    booked,
+    remaining,
+    isFull: remaining <= 0
+  };
+}
+
+function getNextAvailableSession() {
+  const row = getNextOpenSessionStmt.get();
+  if (!row) return null;
+  return getAvailabilityForSession(row.id);
+}
 
   return {
     ...SESSION,
@@ -232,14 +336,10 @@ function getAvailability() {
     remaining,
     isFull: remaining <= 0
   };
-}
 
 // -----------------------------
 // Routes
 // -----------------------------
-app.get("/api/session", (req, res) => {
-  res.json(getAvailability());
-});
 
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
@@ -259,8 +359,6 @@ app.post("/api/create-checkout-session", async (req, res) => {
     if (count > 1 && safeGuestNames.length !== count - 1) {
       return res.status(400).json({ error: "Please enter all guest names." });
     }
-
-    const availability = getAvailability();
 
     if (availability.remaining < count) {
       return res.status(400).json({
@@ -311,11 +409,19 @@ app.get("/api/admin/bookings", (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const availability = getAvailability();
-  const bookings = listBookingsStmt.all(SESSION.id);
+  const currentSession = getNextAvailableSession();
+
+  if (!currentSession) {
+    return res.json({
+      session: null,
+      bookings: []
+    });
+  }
+
+  const bookings = listBookingsStmt.all(currentSession.id);
 
   res.json({
-    session: availability,
+    session: currentSession,
     bookings
   });
 });
