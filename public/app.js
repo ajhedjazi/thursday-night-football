@@ -17,9 +17,9 @@ function renderGuestFields() {
   for (let i = 2; i <= count; i++) {
     const wrapper = document.createElement("label");
     wrapper.innerHTML = `
-      Player ${i} name
-      <input type="text" id="guest-${i}" name="guest-${i}" required />
-    `;
+  Guest ${i} name
+  <input type="text" id="guest-${i}" name="guest-${i}" required />
+`;
     guestFieldsEl.appendChild(wrapper);
   }
 

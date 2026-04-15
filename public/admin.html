@@ -8,23 +8,27 @@
 </head>
 <body>
   <main class="wrap">
-    <section class="card admin"></section>
-      <h1>Bookings admin</h1>
+  <section class="card admin">
+    <div class="admin-header">
+      <div>
+        <h1>Bookings admin</h1>
+        <p class="admin-subtitle">View paid bookings, player counts and guest names.</p>
+      </div>
+    </div>
 
-      <div class="admin-actions">
-  <label>
-    Admin password
-    <input type="password" id="admin-password" />
-  </label>
+    <div class="admin-actions">
+      <label>
+        Admin password
+        <input type="password" id="admin-password" />
+      </label>
 
-  <button id="load-btn" type="button">Load bookings</button>
-</div>
+      <button id="load-btn" type="button">Load bookings</button>
+    </div>
 
-<p id="summary" class="summary"></p>
-<div id="results"></div>
-    </section>
-  </main>
-
+    <p id="summary" class="summary"></p>
+    <div id="results"></div>
+  </section>
+</main>
   <script>
     const loadBtn = document.getElementById("load-btn");
     const results = document.getElementById("results");

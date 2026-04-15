@@ -8,52 +8,69 @@
 </head>
 <body>
   <main class="wrap">
-    <section class="card">
-      <div class="eyebrow">Player booking</div>
-      <h1 id="title">Thursday 7pm Kickabout</h1>
-      <p id="meta" class="meta">Loading session details…</p>
-      <p id="availability" class="availability"></p>
+  <section class="card">
+    <div class="hero-top">
+      <div class="eyebrow">Thursday Night Football</div>
+      <div class="trust-row">
+        <span class="trust-pill">Apple Pay</span>
+        <span class="trust-pill">Card</span>
+        <span class="trust-pill">Secure checkout</span>
+      </div>
+    </div>
+
+    <h1 id="title">Thursday 7pm Kickabout</h1>
+    <p id="meta" class="meta">Loading session details…</p>
+    <p id="availability" class="availability"></p>
+
+    <div class="section-label">Book your place</div>
 
     <form id="booking-form">
-  <label>
-    Your name
-    <input type="text" id="name" name="name" required />
-  </label>
+      <div class="field-grid">
+        <label class="field-span-2">
+          Your name
+          <input type="text" id="name" name="name" required />
+        </label>
 
-  <label>
-    Email
-    <input type="email" id="email" name="email" required />
-  </label>
+        <label class="field-span-2">
+          Email
+          <input type="email" id="email" name="email" required />
+        </label>
 
-  <label>
-    Phone <span class="optional">(optional)</span>
-    <input type="text" id="phone" name="phone" />
-  </label>
+        <label>
+          Phone <span class="optional">(optional)</span>
+          <input type="text" id="phone" name="phone" />
+        </label>
 
-  <label>
-    Number of players
-    <select id="player-count" name="playerCount" required>
-      <option value="1">1</option>
-      <option value="2">2</option>
-      <option value="3">3</option>
-      <option value="4">4</option>
-    </select>
-  </label>
+        <label>
+          Number of players
+          <select id="player-count" name="playerCount" required>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </label>
+      </div>
 
-  <div id="guest-fields"></div>
+      <div id="guest-fields" class="guest-fields"></div>
 
-  <p id="total-price" class="total-price"></p>
-  <p class="policy-note">
-  Payment secures your place. If you cannot make it, message early and we will try to fill your spot.
-</p>
+      <p id="total-price" class="total-price"></p>
 
-  <button id="submit-btn" type="submit">Book & Pay</button>
+      <button id="submit-btn" type="submit">Book & Pay</button>
+
+      <p class="policy-note">
+        Payment secures your place. If you cannot make it, message early and we will try to fill your spot.
+      </p>
     </form>
 
-      <p class="small">Secure payment via Stripe</p>
-      <p id="message" class="message"></p>
-    </section>
-  </main>
+    <div class="footer-note">
+      <span>Secure payment via Stripe</span>
+      <span>No cash chasing</span>
+    </div>
+
+    <p id="message" class="message"></p>
+  </section>
+</main>
 
   <script src="/app.js"></script>
 </body>

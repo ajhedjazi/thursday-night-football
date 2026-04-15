@@ -32,7 +32,7 @@ body {
 
 .card {
   width: 100%;
-  max-width: 560px;
+  max-width: 620px;
   background: var(--card);
   border-radius: var(--radius);
   padding: 36px;
@@ -40,7 +40,15 @@ body {
 }
 
 .card.admin {
-  max-width: 980px;
+  max-width: 1080px;
+}
+
+.hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 10px;
 }
 
 .eyebrow {
@@ -48,13 +56,29 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: #7b746d;
-  margin-bottom: 10px;
+}
+
+.trust-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.trust-pill {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #f3f1ed;
+  border: 1px solid #e2ddd5;
+  font-size: 12px;
+  color: #5f5a54;
+  font-weight: 700;
 }
 
 h1 {
   margin: 0 0 12px;
-  font-size: 32px;
-  line-height: 1.1;
+  font-size: 36px;
+  line-height: 1.05;
 }
 
 .meta {
@@ -69,9 +93,28 @@ h1 {
   font-size: 18px;
 }
 
+.section-label {
+  margin: 0 0 16px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #776f68;
+}
+
 form {
   display: grid;
   gap: 16px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.field-span-2 {
+  grid-column: span 2;
 }
 
 label {
@@ -79,6 +122,11 @@ label {
   gap: 8px;
   font-size: 15px;
   font-weight: 600;
+}
+
+.guest-fields {
+  display: grid;
+  gap: 16px;
 }
 
 input,
@@ -101,8 +149,8 @@ select:focus {
 }
 
 button {
-  margin-top: 8px;
-  padding: 15px 18px;
+  margin-top: 4px;
+  padding: 16px 18px;
   border: 0;
   border-radius: 14px;
   font-size: 18px;
@@ -126,29 +174,32 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.small {
-  margin-top: 14px;
-  font-size: 14px;
-  color: var(--muted);
-  line-height: 1.5;
-}
-
 .total-price {
-  margin: 4px 0 0;
-  padding: 12px 14px;
+  margin: 0;
+  padding: 14px 16px;
   border-radius: 14px;
   background: var(--highlight);
   border: 1px solid #dbe8e3;
   color: var(--primary-dark);
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
 }
 
 .policy-note {
-  margin-top: 4px;
+  margin: 2px 0 0;
   font-size: 13px;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.footer-note {
+  margin-top: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .message {
@@ -211,14 +262,38 @@ td.guest-cell {
   flex: 1;
 }
 
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.admin-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
 @media (max-width: 640px) {
   .card {
     padding: 24px;
     border-radius: 18px;
   }
 
+  .hero-top {
+    flex-direction: column;
+    align-items: start;
+  }
+
+  .trust-row {
+    justify-content: flex-start;
+  }
+
   h1 {
-    font-size: 26px;
+    font-size: 28px;
   }
 
   .meta,
@@ -227,7 +302,19 @@ td.guest-cell {
     font-size: 16px;
   }
 
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field-span-2 {
+    grid-column: span 1;
+  }
+
   button {
     font-size: 17px;
+  }
+
+  .footer-note {
+    flex-direction: column;
   }
 }
