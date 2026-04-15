@@ -17,9 +17,9 @@ function renderGuestFields() {
   for (let i = 2; i <= count; i++) {
     const wrapper = document.createElement("label");
     wrapper.innerHTML = `
-  Guest ${i} name
-  <input type="text" id="guest-${i}" name="guest-${i}" required />
-`;
+      Guest ${i} name
+      <input type="text" id="guest-${i}" name="guest-${i}" required />
+    `;
     guestFieldsEl.appendChild(wrapper);
   }
 
@@ -36,10 +36,11 @@ function updateTotalPrice() {
 async function loadSession() {
   const res = await fetch("/api/session");
   const session = await res.json();
+
   currentSession = session;
 
   titleEl.textContent = session.title;
-  metaEl.textContent = `${session.capacity} spaces • £${(session.pricePence / 100).toFixed(2)} per player • ${session.location}`;
+  metaEl.textContent = `${session.date} • ${session.time} • £${(session.pricePence / 100).toFixed(2)} per player • ${session.location}`;
   availabilityEl.textContent = session.isFull
     ? "This session is now full."
     : `${session.remaining} space(s) left`;

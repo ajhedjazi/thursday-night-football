@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "changeme123";
 
-// Change this to your actual session/game details
+// Seed a few Thursdays manually for now
 const DEFAULT_SESSIONS = [
   {
     id: "thursday-2026-04-23",
@@ -56,6 +56,22 @@ const DEFAULT_SESSIONS = [
 const dbPath = process.env.DB_PATH || "bookings.db";
 const db = new Database(dbPath);
 
+// Create sessions table FIRST
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    date TEXT NOT NULL,
+    time TEXT NOT NULL,
+    location TEXT NOT NULL,
+    price_pence INTEGER NOT NULL,
+    capacity INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// Create bookings table
 db.exec(`
   CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +87,16 @@ db.exec(`
   );
 `);
 
+// Safe upgrade for older DBs
+try {
+  db.exec(`ALTER TABLE bookings ADD COLUMN player_count INTEGER NOT NULL DEFAULT 1;`);
+} catch (e) {}
+
+try {
+  db.exec(`ALTER TABLE bookings ADD COLUMN guest_names TEXT;`);
+} catch (e) {}
+
+// Prepared statements AFTER tables exist
 const insertSessionStmt = db.prepare(`
   INSERT OR IGNORE INTO sessions (
     id,
@@ -84,26 +110,26 @@ const insertSessionStmt = db.prepare(`
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
-for (const s of DEFAULT_SESSIONS) {
-  insertSessionStmt.run(
-    s.id,
-    s.title,
-    s.date,
-    s.time,
-    s.location,
-    s.pricePence,
-    s.capacity,
-    s.status
-  );
-}
+const getNextOpenSessionStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  WHERE status = 'open'
+  ORDER BY date ASC, time ASC
+  LIMIT 1
+`);
 
-try {
-  db.exec(`ALTER TABLE bookings ADD COLUMN player_count INTEGER NOT NULL DEFAULT 1;`);
-} catch (e) {}
+const getSessionByIdStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  WHERE id = ?
+`);
 
-try {
-  db.exec(`ALTER TABLE bookings ADD COLUMN guest_names TEXT;`);
-} catch (e) {}
+const listOpenSessionsStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  WHERE status = 'open'
+  ORDER BY date ASC, time ASC
+`);
 
 const countConfirmedBookingsStmt = db.prepare(`
   SELECT COALESCE(SUM(player_count), 0) AS count
@@ -137,156 +163,19 @@ const listBookingsStmt = db.prepare(`
   ORDER BY created_at DESC
 `);
 
-const getNextOpenSessionStmt = db.prepare(`
-  SELECT *
-  FROM sessions
-  WHERE status = 'open'
-  ORDER BY date ASC, time ASC
-  LIMIT 1
-`);
-
-const getSessionByIdStmt = db.prepare(`
-  SELECT *
-  FROM sessions
-  WHERE id = ?
-`);
-
-const listOpenSessionsStmt = db.prepare(`
-  SELECT *
-  FROM sessions
-  WHERE status = 'open'
-  ORDER BY date ASC, time ASC
-`);
-
-// -----------------------------
-// Email
-// -----------------------------
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: String(process.env.SMTP_SECURE).toLowerCase() === "true",
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  }
-});
-
-async function sendConfirmationEmail({ name, email }) {
-  const subject = `Booking confirmed - ${SESSION.title}`;
-  const text = `
-Hi ${name},
-
-Your booking is confirmed.
-
-Session: ${SESSION.title}
-Date: ${SESSION.date}
-Time: ${SESSION.time}
-Location: ${SESSION.location}
-Paid: £${(SESSION.pricePence / 100).toFixed(2)}
-
-See you there.
-`;
-
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
-    to: email,
-    subject,
-    text
-  });
+// Seed default sessions
+for (const s of DEFAULT_SESSIONS) {
+  insertSessionStmt.run(
+    s.id,
+    s.title,
+    s.date,
+    s.time,
+    s.location,
+    s.pricePence,
+    s.capacity,
+    s.status
+  );
 }
-
-// -----------------------------
-// Middleware
-// -----------------------------
-// Webhook route needs raw body
-app.post(
-  "/webhook",
-  express.raw({ type: "application/json" }),
-  async (req, res) => {
-    const signature = req.headers["stripe-signature"];
-
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        signature,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
-    } catch (err) {
-      console.error("Webhook signature verification failed:", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    try {
-      if (event.type === "checkout.session.completed") {
-        const checkoutSession = event.data.object;
-
-        const existing = findBookingByStripeSessionStmt.get(checkoutSession.id);
-        if (existing) {
-          return res.json({ received: true });
-        }
-
-        const customerName = checkoutSession.metadata?.playerName || "Player";
-        const customerEmail = checkoutSession.metadata?.playerEmail || "";
-        const customerPhone = checkoutSession.metadata?.playerPhone || "";
-        const playerCount = Number(checkoutSession.metadata?.playerCount || 1);
-
-        let guestNames = [];
-        try {
-        guestNames = JSON.parse(checkoutSession.metadata?.guestNames || "[]");
-        } catch (e) {
-        guestNames = [];
-        }
-
-        const bookingSessionId = checkoutSession.metadata?.sessionId;
-
-        if (bookingSessionId !== SESSION.id) {
-        return res.json({ received: true });
-        }
-
-        const confirmedCount = countConfirmedBookingsStmt.get(SESSION.id).count;
-
-        // Safety check in case two people complete at the same time.
-        // This sample simply stops inserting once full.
-        if (confirmedCount + playerCount > SESSION.capacity) {
-          console.warn("Booking paid after session reached capacity:", checkoutSession.id);
-          return res.json({ received: true });
-        }
-
-        insertBookingStmt.run(
-        SESSION.id,
-        checkoutSession.id,
-        "paid",
-        customerName,
-        customerEmail,
-        customerPhone,
-        playerCount,
-        JSON.stringify(guestNames)
-        );
-
-        if (customerEmail) {
-          try {
-            await sendConfirmationEmail({
-              name: customerName,
-              email: customerEmail
-            });
-          } catch (emailErr) {
-            console.error("Failed to send confirmation email:", emailErr.message);
-          }
-        }
-      }
-
-      return res.json({ received: true });
-    } catch (err) {
-      console.error("Webhook processing error:", err);
-      return res.status(500).json({ error: "Webhook processing failed" });
-    }
-  }
-);
-
-// Standard JSON parser for everything else
-app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
 
 // -----------------------------
 // Helpers
@@ -330,16 +219,168 @@ function getNextAvailableSession() {
   return getAvailabilityForSession(row.id);
 }
 
-  return {
-    ...SESSION,
-    booked,
-    remaining,
-    isFull: remaining <= 0
-  };
+// -----------------------------
+// Email
+// -----------------------------
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: String(process.env.SMTP_SECURE).toLowerCase() === "true",
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS
+  }
+});
+
+async function sendConfirmationEmail({ name, email, session, playerCount, guestNames }) {
+  const subject = `You're booked ⚽ ${session.title}`;
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM,
+    to: email,
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto; padding: 20px;">
+        <h2 style="margin-bottom: 10px;">You're in ⚽</h2>
+
+        <p style="margin: 0 0 16px;">
+          Hi ${name}, your spot is confirmed.
+        </p>
+
+        <div style="padding: 16px; border-radius: 12px; background: #f5f3ef; border: 1px solid #e2ddd5; margin-bottom: 16px;">
+          <strong>${session.title}</strong><br/>
+          ${session.date}<br/>
+          ${session.time}<br/>
+          ${session.location}<br/>
+          Players booked: ${playerCount}
+        </div>
+
+        ${
+          guestNames.length
+            ? `<p><strong>Players:</strong><br/>${[name, ...guestNames].join("<br/>")}</p>`
+            : ""
+        }
+
+        <p style="margin-top: 16px;">
+          If you can't make it, let me know early and I’ll try to fill your spot.
+        </p>
+
+        <p style="margin-top: 24px; color: #6b6b6b;">
+          See you there ⚽
+        </p>
+      </div>
+    `
+  });
+}
+
+// -----------------------------
+// Middleware
+// -----------------------------
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const signature = req.headers["stripe-signature"];
+
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.error("Webhook signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    try {
+      if (event.type === "checkout.session.completed") {
+        const checkoutSession = event.data.object;
+
+        const existing = findBookingByStripeSessionStmt.get(checkoutSession.id);
+        if (existing) {
+          return res.json({ received: true });
+        }
+
+        const bookingSessionId = checkoutSession.metadata?.sessionId;
+        if (!bookingSessionId) {
+          return res.json({ received: true });
+        }
+
+        const customerName = checkoutSession.metadata?.playerName || "Player";
+        const customerEmail = checkoutSession.metadata?.playerEmail || "";
+        const customerPhone = checkoutSession.metadata?.playerPhone || "";
+        const playerCount = Number(checkoutSession.metadata?.playerCount || 1);
+
+        let guestNames = [];
+        try {
+          guestNames = JSON.parse(checkoutSession.metadata?.guestNames || "[]");
+        } catch (e) {
+          guestNames = [];
+        }
+
+        const bookedSession = getAvailabilityForSession(bookingSessionId);
+        if (!bookedSession) {
+          return res.json({ received: true });
+        }
+
+        const confirmedCount = bookedSession.booked;
+
+        if (confirmedCount + playerCount > bookedSession.capacity) {
+          console.warn("Booking paid after session reached capacity:", checkoutSession.id);
+          return res.json({ received: true });
+        }
+
+        insertBookingStmt.run(
+          bookingSessionId,
+          checkoutSession.id,
+          "paid",
+          customerName,
+          customerEmail,
+          customerPhone,
+          playerCount,
+          JSON.stringify(guestNames)
+        );
+
+        if (customerEmail) {
+          try {
+            await sendConfirmationEmail({
+              name: customerName,
+              email: customerEmail,
+              session: bookedSession,
+              playerCount,
+              guestNames
+            });
+          } catch (emailErr) {
+            console.error("Failed to send confirmation email:", emailErr.message);
+          }
+        }
+      }
+
+      return res.json({ received: true });
+    } catch (err) {
+      console.error("Webhook processing error:", err);
+      return res.status(500).json({ error: "Webhook processing failed" });
+    }
+  }
+);
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
 
 // -----------------------------
 // Routes
 // -----------------------------
+app.get("/api/session", (req, res) => {
+  const session = getNextAvailableSession();
+
+  if (!session) {
+    return res.status(404).json({ error: "No open session available." });
+  }
+
+  res.json(session);
+});
 
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
@@ -360,13 +401,19 @@ app.post("/api/create-checkout-session", async (req, res) => {
       return res.status(400).json({ error: "Please enter all guest names." });
     }
 
+    const availability = getNextAvailableSession();
+
+    if (!availability) {
+      return res.status(400).json({ error: "No open session available." });
+    }
+
     if (availability.remaining < count) {
       return res.status(400).json({
         error: `Only ${availability.remaining} space(s) left.`
       });
     }
 
-    const totalAmount = SESSION.pricePence * count;
+    const totalAmount = availability.pricePence * count;
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -378,8 +425,8 @@ app.post("/api/create-checkout-session", async (req, res) => {
           price_data: {
             currency: "gbp",
             product_data: {
-              name: SESSION.title,
-              description: `${SESSION.description} • ${count} player(s)`
+              name: availability.title,
+              description: `${availability.date} • ${availability.time} • ${count} player(s)`
             },
             unit_amount: totalAmount
           },
@@ -387,7 +434,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
         }
       ],
       metadata: {
-        sessionId: SESSION.id,
+        sessionId: availability.id,
         playerName: name,
         playerEmail: email,
         playerPhone: phone || "",
@@ -428,18 +475,4 @@ app.get("/api/admin/bookings", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on ${BASE_URL}`);
-});
-
-app.post("/api/reset", (req, res) => {
-  const { password } = req.body || {};
-
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  db.prepare(`
-    DELETE FROM bookings WHERE session_id = ?
-  `).run(SESSION.id);
-
-  res.json({ ok: true });
 });

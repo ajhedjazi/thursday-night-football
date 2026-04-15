@@ -8,53 +8,29 @@
 </head>
 <body>
   <main class="wrap">
-  <section class="card admin">
-    <div class="admin-header">
-      <div>
-        <h1>Bookings admin</h1>
-        <p class="admin-subtitle">View paid bookings, player counts and guest names.</p>
+    <section class="card admin">
+      <div class="admin-header">
+        <div>
+          <h1>Bookings admin</h1>
+          <p class="admin-subtitle">View paid bookings, player counts and guest names.</p>
+        </div>
       </div>
-    </div>
 
-    <div class="admin-actions">
-      <label>
-        Admin password
-        <input type="password" id="admin-password" />
-      </label>
+      <div class="admin-actions">
+        <label>
+          Admin password
+          <input type="password" id="admin-password" />
+        </label>
 
-      <button id="load-btn" type="button">Load bookings</button>
-      <button id="reset-btn" type="button">Reset session</button>
-    </div>
+        <button id="load-btn" type="button">Load bookings</button>
+      </div>
 
-    <p id="summary" class="summary"></p>
-    <div id="results"></div>
-  </section>
-</main>
+      <p id="summary" class="summary"></p>
+      <div id="results"></div>
+    </section>
+  </main>
+
   <script>
-
-    document.getElementById("reset-btn").addEventListener("click", async () => {
-  const password = document.getElementById("admin-password").value;
-
-  if (!confirm("Are you sure you want to reset all bookings?")) return;
-
-  const res = await fetch("/api/reset", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ password })
-  });
-
-  const data = await res.json();
-
-  if (!res.ok) {
-    alert(data.error || "Failed to reset.");
-    return;
-  }
-
-  alert("Session reset.");
-});
-
     const loadBtn = document.getElementById("load-btn");
     const results = document.getElementById("results");
     const summary = document.getElementById("summary");
@@ -78,50 +54,56 @@
         return;
       }
 
-      summary.textContent = `${data.session.booked}/${data.session.capacity} booked. ${data.session.remaining} spaces left.`;
+      if (!data.session) {
+        summary.textContent = "No open session available.";
+        results.innerHTML = "";
+        return;
+      }
+
+      summary.textContent = `${data.session.title} • ${data.session.date} • ${data.session.time} • ${data.session.booked}/${data.session.capacity} booked • ${data.session.remaining} spaces left.`;
 
       if (!data.bookings.length) {
         results.innerHTML = "<p>No bookings yet.</p>";
         return;
       }
 
-const rows = data.bookings.map((b) => {
-  let guests = [];
-  try {
-    guests = JSON.parse(b.guest_names || "[]");
-  } catch (e) {
-    guests = [];
-  }
+      const rows = data.bookings.map((b) => {
+        let guests = [];
+        try {
+          guests = JSON.parse(b.guest_names || "[]");
+        } catch (e) {
+          guests = [];
+        }
 
-  return `
-    <tr>
-      <td>${b.customer_name}</td>
-      <td>${b.customer_email}</td>
-      <td>${b.customer_phone || ""}</td>
-      <td>${b.player_count}</td>
-      <td class="guest-cell">${guests.join(", ")}</td>
-      <td>${b.created_at}</td>
-    </tr>
-  `;
-}).join("");
+        return `
+          <tr>
+            <td>${b.customer_name}</td>
+            <td>${b.customer_email}</td>
+            <td>${b.customer_phone || ""}</td>
+            <td>${b.player_count}</td>
+            <td class="guest-cell">${guests.join(", ")}</td>
+            <td>${b.created_at}</td>
+          </tr>
+        `;
+      }).join("");
 
-    results.innerHTML = `
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Booked by</th>
-          <th>Email</th>
-          <th>Phone</th>
-          <th>Players</th>
-          <th>Guest names</th>
-          <th>Booked at</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div>
-`;
+      results.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Booked by</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Players</th>
+                <th>Guest names</th>
+                <th>Booked at</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
     });
   </script>
 </body>
