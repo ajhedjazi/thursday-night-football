@@ -43,12 +43,22 @@ db.exec(`
     customer_name TEXT NOT NULL,
     customer_email TEXT NOT NULL,
     customer_phone TEXT,
+    player_count INTEGER NOT NULL DEFAULT 1,
+    guest_names TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `);
 
+try {
+  db.exec(`ALTER TABLE bookings ADD COLUMN player_count INTEGER NOT NULL DEFAULT 1;`);
+} catch (e) {}
+
+try {
+  db.exec(`ALTER TABLE bookings ADD COLUMN guest_names TEXT;`);
+} catch (e) {}
+
 const countConfirmedBookingsStmt = db.prepare(`
-  SELECT COUNT(*) AS count
+  SELECT COALESCE(SUM(player_count), 0) AS count
   FROM bookings
   WHERE session_id = ? AND payment_status = 'paid'
 `);
@@ -60,8 +70,10 @@ const insertBookingStmt = db.prepare(`
     payment_status,
     customer_name,
     customer_email,
-    customer_phone
-  ) VALUES (?, ?, ?, ?, ?, ?)
+    customer_phone,
+    player_count,
+    guest_names
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const findBookingByStripeSessionStmt = db.prepare(`
@@ -145,10 +157,17 @@ app.post(
           return res.json({ received: true });
         }
 
-        const sessionId = checkoutSession.metadata?.sessionId;
         const customerName = checkoutSession.metadata?.playerName || "Player";
         const customerEmail = checkoutSession.metadata?.playerEmail || "";
         const customerPhone = checkoutSession.metadata?.playerPhone || "";
+        const playerCount = Number(checkoutSession.metadata?.playerCount || 1);
+
+        let guestNames = [];
+        try {
+        guestNames = JSON.parse(checkoutSession.metadata?.guestNames || "[]");
+        } catch (e) {
+        guestNames = [];
+        }
 
         if (sessionId !== SESSION.id) {
           return res.json({ received: true });
@@ -158,18 +177,20 @@ app.post(
 
         // Safety check in case two people complete at the same time.
         // This sample simply stops inserting once full.
-        if (confirmedCount >= SESSION.capacity) {
+        if (confirmedCount + playerCount > SESSION.capacity) {
           console.warn("Booking paid after session reached capacity:", checkoutSession.id);
           return res.json({ received: true });
         }
 
         insertBookingStmt.run(
-          SESSION.id,
-          checkoutSession.id,
-          "paid",
-          customerName,
-          customerEmail,
-          customerPhone
+        SESSION.id,
+        checkoutSession.id,
+        "paid",
+        customerName,
+        customerEmail,
+        customerPhone,
+        playerCount,
+        JSON.stringify(guestNames)
         );
 
         if (customerEmail) {
@@ -220,17 +241,32 @@ app.get("/api/session", (req, res) => {
 
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
-    const { name, email, phone } = req.body || {};
+    const { name, email, phone, playerCount, guestNames } = req.body || {};
+
+    const count = Number(playerCount || 1);
+    const safeGuestNames = Array.isArray(guestNames) ? guestNames : [];
 
     if (!name || !email) {
       return res.status(400).json({ error: "Name and email are required." });
     }
 
+    if (!Number.isInteger(count) || count < 1 || count > 4) {
+      return res.status(400).json({ error: "Invalid number of players." });
+    }
+
+    if (count > 1 && safeGuestNames.length !== count - 1) {
+      return res.status(400).json({ error: "Please enter all guest names." });
+    }
+
     const availability = getAvailability();
 
-    if (availability.isFull) {
-      return res.status(400).json({ error: "This session is full." });
+    if (availability.remaining < count) {
+      return res.status(400).json({
+        error: `Only ${availability.remaining} space(s) left.`
+      });
     }
+
+    const totalAmount = SESSION.pricePence * count;
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -243,9 +279,9 @@ app.post("/api/create-checkout-session", async (req, res) => {
             currency: "gbp",
             product_data: {
               name: SESSION.title,
-              description: SESSION.description
+              description: `${SESSION.description} • ${count} player(s)`
             },
-            unit_amount: SESSION.pricePence
+            unit_amount: totalAmount
           },
           quantity: 1
         }
@@ -254,7 +290,9 @@ app.post("/api/create-checkout-session", async (req, res) => {
         sessionId: SESSION.id,
         playerName: name,
         playerEmail: email,
-        playerPhone: phone || ""
+        playerPhone: phone || "",
+        playerCount: String(count),
+        guestNames: JSON.stringify(safeGuestNames)
       }
     });
 

@@ -14,24 +14,38 @@
       <p id="meta" class="meta">Loading session details…</p>
       <p id="availability" class="availability"></p>
 
-      <form id="booking-form">
-        <label>
-          Name
-          <input type="text" id="name" name="name" required />
-        </label>
+    <form id="booking-form">
+  <label>
+    Your name
+    <input type="text" id="name" name="name" required />
+  </label>
 
-        <label>
-          Email
-          <input type="email" id="email" name="email" required />
-        </label>
+  <label>
+    Email
+    <input type="email" id="email" name="email" required />
+  </label>
 
-        <label>
-          Phone <span class="optional">(optional)</span>
-          <input type="text" id="phone" name="phone" />
-        </label>
+  <label>
+    Phone <span class="optional">(optional)</span>
+    <input type="text" id="phone" name="phone" />
+  </label>
 
-        <button id="submit-btn" type="submit">Book & Pay</button>
-      </form>
+  <label>
+    Number of players
+    <select id="player-count" name="playerCount" required>
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+    </select>
+  </label>
+
+  <div id="guest-fields"></div>
+
+  <p id="total-price" class="small"></p>
+
+  <button id="submit-btn" type="submit">Book & Pay</button>
+    </form>
 
       <p class="small">Secure payment via Stripe</p>
       <p id="message" class="message"></p>
