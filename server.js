@@ -31,7 +31,8 @@ const SESSION = {
 // -----------------------------
 // Database
 // -----------------------------
-const db = new Database("bookings.db");
+const dbPath = process.env.DB_PATH || "bookings.db";
+const db = new Database(dbPath);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS bookings (
