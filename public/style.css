@@ -2,27 +2,45 @@
   box-sizing: border-box;
 }
 
+:root {
+  --bg: #f5f3ef;
+  --card: #ffffff;
+  --text: #1f1f1f;
+  --muted: #6b6b6b;
+  --border: #d9d4cd;
+  --primary: #2f5d50;
+  --primary-dark: #284f44;
+  --danger: #9b1c1c;
+  --highlight: #f1f6f4;
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.08);
+  --radius: 20px;
+}
+
 body {
   margin: 0;
   font-family: Arial, sans-serif;
-  background: #f6f4f1;
-  color: #1e1e1e;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .wrap {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 32px 20px;
 }
 
 .card {
   width: 100%;
-  max-width: 480px;
-  background: #ffffff;
-  border-radius: 18px;
-  padding: 32px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+  max-width: 560px;
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 36px;
+  box-shadow: var(--shadow);
+}
+
+.card.admin {
+  max-width: 980px;
 }
 
 .eyebrow {
@@ -30,73 +48,186 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: #7b746d;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 h1 {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   font-size: 32px;
   line-height: 1.1;
 }
 
 .meta {
   margin: 0 0 8px;
-  color: #555;
+  color: var(--muted);
+  font-size: 18px;
 }
 
 .availability {
-  margin: 0 0 24px;
-  font-weight: bold;
+  margin: 0 0 26px;
+  font-weight: 700;
+  font-size: 18px;
 }
 
 form {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 label {
   display: grid;
-  gap: 6px;
-  font-size: 14px;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
-input {
+input,
+select {
   width: 100%;
-  padding: 14px 12px;
-  border: 1px solid #d7d2cb;
-  border-radius: 12px;
+  padding: 15px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   font-size: 16px;
+  background: #fff;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(47, 93, 80, 0.12);
 }
 
 button {
   margin-top: 8px;
-  padding: 14px 16px;
+  padding: 15px 18px;
   border: 0;
-  border-radius: 12px;
-  font-size: 16px;
+  border-radius: 14px;
+  font-size: 18px;
+  font-weight: 700;
   cursor: pointer;
-  background: #2f5d50;
+  background: var(--primary);
   color: white;
+  transition: background 0.2s ease, transform 0.05s ease;
+}
+
+button:hover {
+  background: var(--primary-dark);
+}
+
+button:active {
+  transform: translateY(1px);
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
 .small {
-  margin-top: 16px;
+  margin-top: 14px;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.total-price {
+  margin: 4px 0 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--highlight);
+  border: 1px solid #dbe8e3;
+  color: var(--primary-dark);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.policy-note {
+  margin-top: 4px;
   font-size: 13px;
-  color: #666;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .message {
   margin-top: 12px;
   font-size: 14px;
-  color: #9b1c1c;
+  color: var(--danger);
 }
 
 .optional {
   color: #777;
   font-weight: normal;
+}
+
+.summary {
+  margin: 18px 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.table-wrap {
+  margin-top: 18px;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 12px 10px;
+  border-bottom: 1px solid #e6e0d8;
+  vertical-align: top;
+  font-size: 15px;
+}
+
+th {
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+td.guest-cell {
+  max-width: 260px;
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.admin-actions label {
+  flex: 1;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 24px;
+    border-radius: 18px;
+  }
+
+  h1 {
+    font-size: 26px;
+  }
+
+  .meta,
+  .availability,
+  .summary {
+    font-size: 16px;
+  }
+
+  button {
+    font-size: 17px;
+  }
 }

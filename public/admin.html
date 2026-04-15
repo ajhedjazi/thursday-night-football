@@ -8,18 +8,20 @@
 </head>
 <body>
   <main class="wrap">
-    <section class="card" style="max-width: 800px;">
+    <section class="card admin"></section>
       <h1>Bookings admin</h1>
 
-      <label>
-        Admin password
-        <input type="password" id="admin-password" />
-      </label>
+      <div class="admin-actions">
+  <label>
+    Admin password
+    <input type="password" id="admin-password" />
+  </label>
 
-      <button id="load-btn" type="button">Load bookings</button>
+  <button id="load-btn" type="button">Load bookings</button>
+</div>
 
-      <p id="summary"></p>
-      <div id="results"></div>
+<p id="summary" class="summary"></p>
+<div id="results"></div>
     </section>
   </main>
 
@@ -68,27 +70,29 @@ const rows = data.bookings.map((b) => {
       <td>${b.customer_email}</td>
       <td>${b.customer_phone || ""}</td>
       <td>${b.player_count}</td>
-      <td>${guests.join(", ")}</td>
+      <td class="guest-cell">${guests.join(", ")}</td>
       <td>${b.created_at}</td>
     </tr>
   `;
 }).join("");
 
     results.innerHTML = `
-      <table style="width:100%; border-collapse: collapse; margin-top: 16px;">
-        <thead>
-          <tr>
-            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Booked by</th>
-            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Email</th>
-            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Phone</th>
-            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Players</th>
-            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Guest names</th>
-            <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Booked at</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Booked by</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Players</th>
+          <th>Guest names</th>
+          <th>Booked at</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
+`;
     });
   </script>
 </body>
