@@ -323,3 +323,17 @@ app.get("/api/admin/bookings", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on ${BASE_URL}`);
 });
+
+app.post("/api/reset", (req, res) => {
+  const { password } = req.body || {};
+
+  if (password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  db.prepare(`
+    DELETE FROM bookings WHERE session_id = ?
+  `).run(SESSION.id);
+
+  res.json({ ok: true });
+});

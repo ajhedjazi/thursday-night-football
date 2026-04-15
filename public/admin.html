@@ -23,6 +23,7 @@
       </label>
 
       <button id="load-btn" type="button">Load bookings</button>
+      <button id="reset-btn" type="button">Reset session</button>
     </div>
 
     <p id="summary" class="summary"></p>
@@ -30,6 +31,30 @@
   </section>
 </main>
   <script>
+
+    document.getElementById("reset-btn").addEventListener("click", async () => {
+  const password = document.getElementById("admin-password").value;
+
+  if (!confirm("Are you sure you want to reset all bookings?")) return;
+
+  const res = await fetch("/api/reset", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ password })
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    alert(data.error || "Failed to reset.");
+    return;
+  }
+
+  alert("Session reset.");
+});
+
     const loadBtn = document.getElementById("load-btn");
     const results = document.getElementById("results");
     const summary = document.getElementById("summary");
