@@ -169,8 +169,10 @@ app.post(
         guestNames = [];
         }
 
-        if (sessionId !== SESSION.id) {
-          return res.json({ received: true });
+        const bookingSessionId = checkoutSession.metadata?.sessionId;
+
+        if (bookingSessionId !== SESSION.id) {
+        return res.json({ received: true });
         }
 
         const confirmedCount = countConfirmedBookingsStmt.get(SESSION.id).count;
