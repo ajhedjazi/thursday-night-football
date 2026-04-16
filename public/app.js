@@ -34,26 +34,39 @@ function updateTotalPrice() {
 }
 
 async function loadSession() {
-  const res = await fetch("/api/session");
-  const session = await res.json();
+  try {
+    const res = await fetch("/api/session");
+    const data = await res.json();
 
-  currentSession = session;
+    if (!res.ok) {
+      titleEl.textContent = "No session available";
+      metaEl.textContent = "";
+      availabilityEl.textContent = data.error || "No open session available.";
+      formEl.style.display = "none";
+      return;
+    }
 
-  titleEl.textContent = session.title;
-  metaEl.textContent = `${session.date} • ${session.time} • £${(session.pricePence / 100).toFixed(2)} per player • ${session.location}`;
-  availabilityEl.textContent = session.isFull
-    ? "This session is now full."
-    : `${session.remaining} space(s) left`;
+    currentSession = data;
 
-  if (session.isFull) {
-    submitBtn.disabled = true;
-    submitBtn.textContent = "Session full";
-  } else {
-    submitBtn.disabled = false;
-    submitBtn.textContent = "Book & Pay";
+    titleEl.textContent = data.title;
+    metaEl.textContent = `${data.date} • ${data.time} • £${(data.pricePence / 100).toFixed(2)} per player • ${data.location}`;
+    availabilityEl.textContent = data.isFull
+      ? "This session is now full."
+      : `${data.remaining} space(s) left`;
+
+    if (data.isFull) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Session full";
+    } else {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Book & Pay";
+    }
+
+    renderGuestFields();
+  } catch (err) {
+    titleEl.textContent = "Something went wrong";
+    availabilityEl.textContent = "Please try again.";
   }
-
-  renderGuestFields();
 }
 
 playerCountEl.addEventListener("change", () => {

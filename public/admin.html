@@ -12,7 +12,7 @@
       <div class="admin-header">
         <div>
           <h1>Bookings admin</h1>
-          <p class="admin-subtitle">View paid bookings, player counts and guest names.</p>
+          <p class="admin-subtitle">Manage bookings, session status, credits and refunds.</p>
         </div>
       </div>
 
@@ -25,6 +25,27 @@
         <button id="load-btn" type="button">Load bookings</button>
       </div>
 
+      <div class="admin-actions" style="margin-top: 8px;">
+        <button id="close-session-btn" type="button">Close session</button>
+        <button id="cancel-session-btn" type="button">Cancel session</button>
+      </div>
+
+      <div class="admin-actions" style="margin-top: 8px;">
+        <label>
+          Manual player name
+          <input type="text" id="manual-name" />
+        </label>
+        <label>
+          Manual player email
+          <input type="email" id="manual-email" />
+        </label>
+        <label>
+          Manual player phone
+          <input type="text" id="manual-phone" />
+        </label>
+        <button id="add-manual-btn" type="button">Add manual player</button>
+      </div>
+
       <p id="summary" class="summary"></p>
       <div id="results"></div>
     </section>
@@ -32,18 +53,23 @@
 
   <script>
     const loadBtn = document.getElementById("load-btn");
+    const closeSessionBtn = document.getElementById("close-session-btn");
+    const cancelSessionBtn = document.getElementById("cancel-session-btn");
+    const addManualBtn = document.getElementById("add-manual-btn");
     const results = document.getElementById("results");
     const summary = document.getElementById("summary");
 
-    loadBtn.addEventListener("click", async () => {
+    function getPassword() {
+      return document.getElementById("admin-password").value;
+    }
+
+    async function loadBookings() {
       results.innerHTML = "";
       summary.textContent = "";
 
-      const password = document.getElementById("admin-password").value;
-
       const res = await fetch("/api/admin/bookings", {
         headers: {
-          "x-admin-password": password
+          "x-admin-password": getPassword()
         }
       });
 
@@ -75,14 +101,26 @@
           guests = [];
         }
 
+        const statusBits = [];
+        if (b.is_manual) statusBits.push("Manual");
+        if (b.is_credited) statusBits.push("Credited");
+        if (b.payment_status === "refunded") statusBits.push("Refunded");
+
         return `
           <tr>
             <td>${b.customer_name}</td>
-            <td>${b.customer_email}</td>
+            <td>${b.customer_email || ""}</td>
             <td>${b.customer_phone || ""}</td>
             <td>${b.player_count}</td>
             <td class="guest-cell">${guests.join(", ")}</td>
+            <td>${statusBits.join(", ") || "Paid"}</td>
             <td>${b.created_at}</td>
+            <td>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button type="button" onclick="giveCredit(${b.id})">Give credit</button>
+                <button type="button" onclick="refundBooking(${b.id})">Refund</button>
+              </div>
+            </td>
           </tr>
         `;
       }).join("");
@@ -97,14 +135,140 @@
                 <th>Phone</th>
                 <th>Players</th>
                 <th>Guest names</th>
+                <th>Status</th>
                 <th>Booked at</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
       `;
+    }
+
+    loadBtn.addEventListener("click", loadBookings);
+
+    closeSessionBtn.addEventListener("click", async () => {
+      if (!confirm("Close the current session?")) return;
+
+      const res = await fetch("/api/admin/session/close", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": getPassword()
+        }
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to close session.");
+        return;
+      }
+
+      alert("Session closed.");
+      loadBookings();
     });
+
+    cancelSessionBtn.addEventListener("click", async () => {
+      if (!confirm("Cancel the current session?")) return;
+
+      const res = await fetch("/api/admin/session/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": getPassword()
+        }
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to cancel session.");
+        return;
+      }
+
+      alert("Session cancelled.");
+      loadBookings();
+    });
+
+    addManualBtn.addEventListener("click", async () => {
+      const name = document.getElementById("manual-name").value.trim();
+      const email = document.getElementById("manual-email").value.trim();
+      const phone = document.getElementById("manual-phone").value.trim();
+
+      if (!name) {
+        alert("Enter a player name.");
+        return;
+      }
+
+      const res = await fetch("/api/admin/manual-booking", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": getPassword()
+        },
+        body: JSON.stringify({ name, email, phone })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to add player.");
+        return;
+      }
+
+      document.getElementById("manual-name").value = "";
+      document.getElementById("manual-email").value = "";
+      document.getElementById("manual-phone").value = "";
+
+      alert("Manual player added.");
+      loadBookings();
+    });
+
+    async function giveCredit(bookingId) {
+      if (!confirm("Give this booking credit for the next open session?")) return;
+
+      const res = await fetch("/api/admin/booking/credit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": getPassword()
+        },
+        body: JSON.stringify({ bookingId })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to give credit.");
+        return;
+      }
+
+      alert("Credit applied to next session.");
+      loadBookings();
+    }
+
+    async function refundBooking(bookingId) {
+      if (!confirm("Refund this booking?")) return;
+
+      const res = await fetch("/api/admin/booking/refund", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": getPassword()
+        },
+        body: JSON.stringify({ bookingId })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to refund booking.");
+        return;
+      }
+
+      alert("Booking marked as refunded.");
+      loadBookings();
+    }
+
+    window.giveCredit = giveCredit;
+    window.refundBooking = refundBooking;
   </script>
 </body>
 </html>

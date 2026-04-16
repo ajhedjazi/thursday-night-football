@@ -56,7 +56,7 @@ const DEFAULT_SESSIONS = [
 const dbPath = process.env.DB_PATH || "bookings.db";
 const db = new Database(dbPath);
 
-// Create sessions table FIRST
+// Create sessions table
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -79,15 +79,17 @@ db.exec(`
     stripe_session_id TEXT NOT NULL UNIQUE,
     payment_status TEXT NOT NULL,
     customer_name TEXT NOT NULL,
-    customer_email TEXT NOT NULL,
+    customer_email TEXT,
     customer_phone TEXT,
     player_count INTEGER NOT NULL DEFAULT 1,
     guest_names TEXT,
+    is_manual INTEGER NOT NULL DEFAULT 0,
+    is_credited INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `);
 
-// Safe upgrade for older DBs
+// Safe upgrades for older DBs
 try {
   db.exec(`ALTER TABLE bookings ADD COLUMN player_count INTEGER NOT NULL DEFAULT 1;`);
 } catch (e) {}
@@ -96,7 +98,15 @@ try {
   db.exec(`ALTER TABLE bookings ADD COLUMN guest_names TEXT;`);
 } catch (e) {}
 
-// Prepared statements AFTER tables exist
+try {
+  db.exec(`ALTER TABLE bookings ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0;`);
+} catch (e) {}
+
+try {
+  db.exec(`ALTER TABLE bookings ADD COLUMN is_credited INTEGER NOT NULL DEFAULT 0;`);
+} catch (e) {}
+
+// Prepared statements
 const insertSessionStmt = db.prepare(`
   INSERT OR IGNORE INTO sessions (
     id,
@@ -124,17 +134,26 @@ const getSessionByIdStmt = db.prepare(`
   WHERE id = ?
 `);
 
-const listOpenSessionsStmt = db.prepare(`
+const getNextOpenSessionAfterStmt = db.prepare(`
   SELECT *
   FROM sessions
   WHERE status = 'open'
+    AND (date > ? OR (date = ? AND time > ?))
   ORDER BY date ASC, time ASC
+  LIMIT 1
+`);
+
+const updateSessionStatusStmt = db.prepare(`
+  UPDATE sessions
+  SET status = ?
+  WHERE id = ?
 `);
 
 const countConfirmedBookingsStmt = db.prepare(`
   SELECT COALESCE(SUM(player_count), 0) AS count
   FROM bookings
-  WHERE session_id = ? AND payment_status = 'paid'
+  WHERE session_id = ?
+    AND payment_status = 'paid'
 `);
 
 const insertBookingStmt = db.prepare(`
@@ -146,8 +165,10 @@ const insertBookingStmt = db.prepare(`
     customer_email,
     customer_phone,
     player_count,
-    guest_names
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    guest_names,
+    is_manual,
+    is_credited
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const findBookingByStripeSessionStmt = db.prepare(`
@@ -161,6 +182,24 @@ const listBookingsStmt = db.prepare(`
   FROM bookings
   WHERE session_id = ?
   ORDER BY created_at DESC
+`);
+
+const getBookingByIdStmt = db.prepare(`
+  SELECT *
+  FROM bookings
+  WHERE id = ?
+`);
+
+const markBookingRefundedStmt = db.prepare(`
+  UPDATE bookings
+  SET payment_status = 'refunded'
+  WHERE id = ?
+`);
+
+const markBookingCreditedStmt = db.prepare(`
+  UPDATE bookings
+  SET is_credited = 1
+  WHERE id = ?
 `);
 
 // Seed default sessions
@@ -219,6 +258,15 @@ function getNextAvailableSession() {
   return getAvailabilityForSession(row.id);
 }
 
+function requireAdmin(req, res) {
+  const password = req.headers["x-admin-password"];
+  if (password !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+  return true;
+}
+
 // -----------------------------
 // Email
 // -----------------------------
@@ -274,7 +322,7 @@ async function sendConfirmationEmail({ name, email, session, playerCount, guestN
 }
 
 // -----------------------------
-// Middleware
+// Webhook
 // -----------------------------
 app.post(
   "/webhook",
@@ -325,9 +373,7 @@ app.post(
           return res.json({ received: true });
         }
 
-        const confirmedCount = bookedSession.booked;
-
-        if (confirmedCount + playerCount > bookedSession.capacity) {
+        if (bookedSession.booked + playerCount > bookedSession.capacity) {
           console.warn("Booking paid after session reached capacity:", checkoutSession.id);
           return res.json({ received: true });
         }
@@ -340,7 +386,9 @@ app.post(
           customerEmail,
           customerPhone,
           playerCount,
-          JSON.stringify(guestNames)
+          JSON.stringify(guestNames),
+          0,
+          0
         );
 
         if (customerEmail) {
@@ -366,11 +414,14 @@ app.post(
   }
 );
 
+// -----------------------------
+// Standard middleware
+// -----------------------------
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // -----------------------------
-// Routes
+// Public routes
 // -----------------------------
 app.get("/api/session", (req, res) => {
   const session = getNextAvailableSession();
@@ -450,11 +501,11 @@ app.post("/api/create-checkout-session", async (req, res) => {
   }
 });
 
+// -----------------------------
+// Admin routes
+// -----------------------------
 app.get("/api/admin/bookings", (req, res) => {
-  const password = req.headers["x-admin-password"];
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (!requireAdmin(req, res)) return;
 
   const currentSession = getNextAvailableSession();
 
@@ -471,6 +522,157 @@ app.get("/api/admin/bookings", (req, res) => {
     session: currentSession,
     bookings
   });
+});
+
+app.post("/api/admin/session/close", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const currentSession = getNextAvailableSession();
+  if (!currentSession) {
+    return res.status(400).json({ error: "No open session available." });
+  }
+
+  updateSessionStatusStmt.run("closed", currentSession.id);
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/session/cancel", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const currentSession = getNextAvailableSession();
+  if (!currentSession) {
+    return res.status(400).json({ error: "No open session available." });
+  }
+
+  updateSessionStatusStmt.run("cancelled", currentSession.id);
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/manual-booking", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { name, email, phone } = req.body || {};
+
+  if (!name) {
+    return res.status(400).json({ error: "Name is required." });
+  }
+
+  const currentSession = getNextAvailableSession();
+  if (!currentSession) {
+    return res.status(400).json({ error: "No open session available." });
+  }
+
+  if (currentSession.remaining < 1) {
+    return res.status(400).json({ error: "Session is full." });
+  }
+
+  const manualStripeId = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  insertBookingStmt.run(
+    currentSession.id,
+    manualStripeId,
+    "paid",
+    name,
+    email || "",
+    phone || "",
+    1,
+    JSON.stringify([]),
+    1,
+    0
+  );
+
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/booking/refund", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { bookingId } = req.body || {};
+  const booking = getBookingByIdStmt.get(bookingId);
+
+  if (!booking) {
+    return res.status(404).json({ error: "Booking not found." });
+  }
+
+  if (booking.payment_status === "refunded") {
+    return res.status(400).json({ error: "Booking already refunded." });
+  }
+
+  if (booking.stripe_session_id && !booking.stripe_session_id.startsWith("manual-")) {
+    try {
+      const session = await stripe.checkout.sessions.retrieve(booking.stripe_session_id, {
+        expand: ["payment_intent"]
+      });
+
+      const paymentIntentId = session.payment_intent?.id;
+      if (paymentIntentId) {
+        await stripe.refunds.create({
+          payment_intent: paymentIntentId
+        });
+      }
+    } catch (err) {
+      console.error("Stripe refund failed:", err.message);
+      return res.status(500).json({ error: "Stripe refund failed." });
+    }
+  }
+
+  markBookingRefundedStmt.run(bookingId);
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/booking/credit", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { bookingId } = req.body || {};
+  const booking = getBookingByIdStmt.get(bookingId);
+
+  if (!booking) {
+    return res.status(404).json({ error: "Booking not found." });
+  }
+
+  if (booking.is_credited) {
+    return res.status(400).json({ error: "Booking already credited." });
+  }
+
+  const currentSessionRow = getSessionByIdStmt.get(booking.session_id);
+  if (!currentSessionRow) {
+    return res.status(400).json({ error: "Current session not found." });
+  }
+
+  const nextSessionRow = getNextOpenSessionAfterStmt.get(
+    currentSessionRow.date,
+    currentSessionRow.date,
+    currentSessionRow.time
+  );
+
+  if (!nextSessionRow) {
+    return res.status(400).json({ error: "No next open session available." });
+  }
+
+  const nextSession = getAvailabilityForSession(nextSessionRow.id);
+  if (!nextSession) {
+    return res.status(400).json({ error: "Next session not found." });
+  }
+
+  if (nextSession.remaining < booking.player_count) {
+    return res.status(400).json({ error: "Not enough spaces in next session." });
+  }
+
+  insertBookingStmt.run(
+    nextSession.id,
+    `credit-${Date.now()}-${booking.id}`,
+    "paid",
+    booking.customer_name,
+    booking.customer_email || "",
+    booking.customer_phone || "",
+    booking.player_count,
+    booking.guest_names || JSON.stringify([]),
+    booking.is_manual || 0,
+    1
+  );
+
+  markBookingCreditedStmt.run(bookingId);
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
