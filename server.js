@@ -6,6 +6,10 @@ const Stripe = require("stripe");
 const Database = require("better-sqlite3");
 const nodemailer = require("nodemailer");
 
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error("Missing STRIPE_SECRET_KEY in .env");
+}
+
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -268,6 +272,12 @@ function requireAdmin(req, res) {
   return true;
 }
 
+function bookingSessionAmountPence(sessionId) {
+  const row = getSessionByIdStmt.get(sessionId);
+  if (!row) return 0;
+  return Number(row.price_pence || 0);
+}
+
 // -----------------------------
 // Email
 // -----------------------------
@@ -325,6 +335,8 @@ app.post(
   "/webhook",
   express.raw({ type: "application/json" }),
   async (req, res) => {
+    console.log("Webhook received");
+
     const signature = req.headers["stripe-signature"];
 
     let event;
@@ -479,6 +491,10 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
     const totalAmount = availability.pricePence * players.length;
 
+    console.log("Creating checkout session...");
+    console.log("Stripe key prefix:", process.env.STRIPE_SECRET_KEY.slice(0, 7));
+    console.log("Base URL:", BASE_URL);
+
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       success_url: `${BASE_URL}/success.html`,
@@ -505,8 +521,10 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
     return res.json({ url: checkoutSession.url });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Could not create checkout session." });
+    console.error("Stripe checkout error:", err);
+    return res.status(500).json({
+      error: err?.message || "Could not create checkout session."
+    });
   }
 });
 
@@ -610,15 +628,13 @@ app.post("/api/admin/booking/refund", async (req, res) => {
   if (booking.stripe_session_id && !booking.stripe_session_id.startsWith("manual-")) {
     try {
       const relatedBookings = db
-        .prepare(
-          `
+        .prepare(`
           SELECT *
           FROM bookings
           WHERE stripe_session_id = ?
             AND payment_status = 'paid'
           ORDER BY id ASC
-        `
-        )
+        `)
         .all(booking.stripe_session_id);
 
       if (!relatedBookings.length) {
@@ -626,7 +642,7 @@ app.post("/api/admin/booking/refund", async (req, res) => {
       }
 
       const paidCount = relatedBookings.length;
-      const refundAmount = Math.round((bookingSessionAmountPence(booking.session_id) / paidCount));
+      const refundAmount = Math.round(bookingSessionAmountPence(booking.session_id) / paidCount);
 
       const session = await stripe.checkout.sessions.retrieve(booking.stripe_session_id, {
         expand: ["payment_intent"]
@@ -704,12 +720,9 @@ app.post("/api/admin/booking/credit", (req, res) => {
   res.json({ ok: true });
 });
 
-function bookingSessionAmountPence(sessionId) {
-  const row = getSessionByIdStmt.get(sessionId);
-  if (!row) return 0;
-  return Number(row.price_pence || 0);
-}
-
 app.listen(PORT, () => {
   console.log(`Server running on ${BASE_URL}`);
+  console.log("Stripe key loaded:", !!process.env.STRIPE_SECRET_KEY);
+  console.log("Stripe key prefix:", process.env.STRIPE_SECRET_KEY?.slice(0, 7));
+  console.log("DB path:", dbPath);
 });
