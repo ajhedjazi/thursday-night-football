@@ -17,7 +17,7 @@ function renderGuestFields() {
   for (let i = 2; i <= count; i++) {
     const wrapper = document.createElement("label");
     wrapper.innerHTML = `
-      Guest ${i} name
+      Player ${i} name
       <input type="text" id="guest-${i}" name="guest-${i}" required />
     `;
     guestFieldsEl.appendChild(wrapper);
@@ -98,21 +98,44 @@ formEl.addEventListener("submit", async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = "Please wait...";
 
-  const guestNames = [];
-  for (let i = 2; i <= playerCount; i++) {
-    const input = document.getElementById(`guest-${i}`);
-    if (input && input.value.trim()) {
-      guestNames.push(input.value.trim());
-    }
+  const players = [];
+
+  const mainName = document.getElementById("name").value.trim();
+  const email = document.getElementById("email").value.trim();
+  const phone = document.getElementById("phone").value.trim();
+
+  if (!mainName || !email) {
+    messageEl.textContent = "Name and email are required.";
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Book & Pay";
+    return;
   }
 
-  const payload = {
-    name: document.getElementById("name").value.trim(),
-    email: document.getElementById("email").value.trim(),
-    phone: document.getElementById("phone").value.trim(),
-    playerCount,
-    guestNames
-  };
+  players.push({
+    name: mainName,
+    email,
+    phone
+  });
+
+  for (let i = 2; i <= playerCount; i++) {
+    const input = document.getElementById(`guest-${i}`);
+    const guestName = input && input.value.trim();
+
+    if (!guestName) {
+      messageEl.textContent = "Please enter all player names.";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Book & Pay";
+      return;
+    }
+
+    players.push({
+      name: guestName,
+      email: "",
+      phone: ""
+    });
+  }
+
+  const payload = { players };
 
   try {
     const res = await fetch("/api/create-checkout-session", {

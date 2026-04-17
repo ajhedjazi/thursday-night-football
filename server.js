@@ -76,7 +76,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
-    stripe_session_id TEXT NOT NULL UNIQUE,
+    stripe_session_id TEXT NOT NULL,
     payment_status TEXT NOT NULL,
     customer_name TEXT NOT NULL,
     customer_email TEXT,
@@ -150,7 +150,7 @@ const updateSessionStatusStmt = db.prepare(`
 `);
 
 const countConfirmedBookingsStmt = db.prepare(`
-  SELECT COALESCE(SUM(player_count), 0) AS count
+  SELECT COUNT(*) AS count
   FROM bookings
   WHERE session_id = ?
     AND payment_status = 'paid'
@@ -171,17 +171,18 @@ const insertBookingStmt = db.prepare(`
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
-const findBookingByStripeSessionStmt = db.prepare(`
+const findAnyBookingByStripeSessionStmt = db.prepare(`
   SELECT *
   FROM bookings
   WHERE stripe_session_id = ?
+  LIMIT 1
 `);
 
 const listBookingsStmt = db.prepare(`
   SELECT *
   FROM bookings
   WHERE session_id = ?
-  ORDER BY created_at DESC
+  ORDER BY created_at DESC, id DESC
 `);
 
 const getBookingByIdStmt = db.prepare(`
@@ -280,7 +281,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-async function sendConfirmationEmail({ name, email, session, playerCount, guestNames }) {
+async function sendConfirmationEmail({ name, email, session, players }) {
   const subject = `You're booked ⚽ ${session.title}`;
 
   await transporter.sendMail({
@@ -300,14 +301,10 @@ async function sendConfirmationEmail({ name, email, session, playerCount, guestN
           ${session.date}<br/>
           ${session.time}<br/>
           ${session.location}<br/>
-          Players booked: ${playerCount}
+          Players booked: ${players.length}
         </div>
 
-        ${
-          guestNames.length
-            ? `<p><strong>Players:</strong><br/>${[name, ...guestNames].join("<br/>")}</p>`
-            : ""
-        }
+        <p><strong>Players:</strong><br/>${players.map((p) => p.name).join("<br/>")}</p>
 
         <p style="margin-top: 16px;">
           If you can't make it, let me know early and I’ll try to fill your spot.
@@ -346,7 +343,7 @@ app.post(
       if (event.type === "checkout.session.completed") {
         const checkoutSession = event.data.object;
 
-        const existing = findBookingByStripeSessionStmt.get(checkoutSession.id);
+        const existing = findAnyBookingByStripeSessionStmt.get(checkoutSession.id);
         if (existing) {
           return res.json({ received: true });
         }
@@ -356,16 +353,19 @@ app.post(
           return res.json({ received: true });
         }
 
-        const customerName = checkoutSession.metadata?.playerName || "Player";
-        const customerEmail = checkoutSession.metadata?.playerEmail || "";
-        const customerPhone = checkoutSession.metadata?.playerPhone || "";
-        const playerCount = Number(checkoutSession.metadata?.playerCount || 1);
-
-        let guestNames = [];
+        let players = [];
         try {
-          guestNames = JSON.parse(checkoutSession.metadata?.guestNames || "[]");
+          players = JSON.parse(checkoutSession.metadata?.players || "[]");
         } catch (e) {
-          guestNames = [];
+          players = [];
+        }
+
+        players = Array.isArray(players)
+          ? players.filter((p) => p && typeof p.name === "string" && p.name.trim())
+          : [];
+
+        if (!players.length) {
+          return res.json({ received: true });
         }
 
         const bookedSession = getAvailabilityForSession(bookingSessionId);
@@ -373,32 +373,38 @@ app.post(
           return res.json({ received: true });
         }
 
-        if (bookedSession.booked + playerCount > bookedSession.capacity) {
+        if (bookedSession.booked + players.length > bookedSession.capacity) {
           console.warn("Booking paid after session reached capacity:", checkoutSession.id);
           return res.json({ received: true });
         }
 
-        insertBookingStmt.run(
-          bookingSessionId,
-          checkoutSession.id,
-          "paid",
-          customerName,
-          customerEmail,
-          customerPhone,
-          playerCount,
-          JSON.stringify(guestNames),
-          0,
-          0
-        );
+        const insertMany = db.transaction((playersToInsert) => {
+          for (const player of playersToInsert) {
+            insertBookingStmt.run(
+              bookingSessionId,
+              checkoutSession.id,
+              "paid",
+              player.name.trim(),
+              player.email || "",
+              player.phone || "",
+              1,
+              JSON.stringify([]),
+              0,
+              0
+            );
+          }
+        });
 
-        if (customerEmail) {
+        insertMany(players);
+
+        const leadPlayer = players[0];
+        if (leadPlayer?.email) {
           try {
             await sendConfirmationEmail({
-              name: customerName,
-              email: customerEmail,
+              name: leadPlayer.name,
+              email: leadPlayer.email,
               session: bookedSession,
-              playerCount,
-              guestNames
+              players
             });
           } catch (emailErr) {
             console.error("Failed to send confirmation email:", emailErr.message);
@@ -435,21 +441,28 @@ app.get("/api/session", (req, res) => {
 
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
-    const { name, email, phone, playerCount, guestNames } = req.body || {};
+    let { players } = req.body || {};
 
-    const count = Number(playerCount || 1);
-    const safeGuestNames = Array.isArray(guestNames) ? guestNames : [];
+    players = Array.isArray(players) ? players : [];
 
-    if (!name || !email) {
-      return res.status(400).json({ error: "Name and email are required." });
+    players = players
+      .map((player) => ({
+        name: String(player?.name || "").trim(),
+        email: String(player?.email || "").trim(),
+        phone: String(player?.phone || "").trim()
+      }))
+      .filter((player) => player.name);
+
+    if (!players.length) {
+      return res.status(400).json({ error: "At least one player is required." });
     }
 
-    if (!Number.isInteger(count) || count < 1 || count > 4) {
+    if (!players[0].email) {
+      return res.status(400).json({ error: "Lead player email is required." });
+    }
+
+    if (players.length > 4) {
       return res.status(400).json({ error: "Invalid number of players." });
-    }
-
-    if (count > 1 && safeGuestNames.length !== count - 1) {
-      return res.status(400).json({ error: "Please enter all guest names." });
     }
 
     const availability = getNextAvailableSession();
@@ -458,26 +471,26 @@ app.post("/api/create-checkout-session", async (req, res) => {
       return res.status(400).json({ error: "No open session available." });
     }
 
-    if (availability.remaining < count) {
+    if (availability.remaining < players.length) {
       return res.status(400).json({
         error: `Only ${availability.remaining} space(s) left.`
       });
     }
 
-    const totalAmount = availability.pricePence * count;
+    const totalAmount = availability.pricePence * players.length;
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       success_url: `${BASE_URL}/success.html`,
       cancel_url: `${BASE_URL}/cancel.html`,
-      customer_email: email,
+      customer_email: players[0].email,
       line_items: [
         {
           price_data: {
             currency: "gbp",
             product_data: {
               name: availability.title,
-              description: `${availability.date} • ${availability.time} • ${count} player(s)`
+              description: `${availability.date} • ${availability.time} • ${players.length} player(s)`
             },
             unit_amount: totalAmount
           },
@@ -486,11 +499,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
       ],
       metadata: {
         sessionId: availability.id,
-        playerName: name,
-        playerEmail: email,
-        playerPhone: phone || "",
-        playerCount: String(count),
-        guestNames: JSON.stringify(safeGuestNames)
+        players: JSON.stringify(players)
       }
     });
 
@@ -600,6 +609,25 @@ app.post("/api/admin/booking/refund", async (req, res) => {
 
   if (booking.stripe_session_id && !booking.stripe_session_id.startsWith("manual-")) {
     try {
+      const relatedBookings = db
+        .prepare(
+          `
+          SELECT *
+          FROM bookings
+          WHERE stripe_session_id = ?
+            AND payment_status = 'paid'
+          ORDER BY id ASC
+        `
+        )
+        .all(booking.stripe_session_id);
+
+      if (!relatedBookings.length) {
+        return res.status(400).json({ error: "No paid bookings found for this payment." });
+      }
+
+      const paidCount = relatedBookings.length;
+      const refundAmount = Math.round((bookingSessionAmountPence(booking.session_id) / paidCount));
+
       const session = await stripe.checkout.sessions.retrieve(booking.stripe_session_id, {
         expand: ["payment_intent"]
       });
@@ -607,7 +635,8 @@ app.post("/api/admin/booking/refund", async (req, res) => {
       const paymentIntentId = session.payment_intent?.id;
       if (paymentIntentId) {
         await stripe.refunds.create({
-          payment_intent: paymentIntentId
+          payment_intent: paymentIntentId,
+          amount: refundAmount
         });
       }
     } catch (err) {
@@ -654,7 +683,7 @@ app.post("/api/admin/booking/credit", (req, res) => {
     return res.status(400).json({ error: "Next session not found." });
   }
 
-  if (nextSession.remaining < booking.player_count) {
+  if (nextSession.remaining < 1) {
     return res.status(400).json({ error: "Not enough spaces in next session." });
   }
 
@@ -665,8 +694,8 @@ app.post("/api/admin/booking/credit", (req, res) => {
     booking.customer_name,
     booking.customer_email || "",
     booking.customer_phone || "",
-    booking.player_count,
-    booking.guest_names || JSON.stringify([]),
+    1,
+    JSON.stringify([]),
     booking.is_manual || 0,
     1
   );
@@ -674,6 +703,12 @@ app.post("/api/admin/booking/credit", (req, res) => {
   markBookingCreditedStmt.run(bookingId);
   res.json({ ok: true });
 });
+
+function bookingSessionAmountPence(sessionId) {
+  const row = getSessionByIdStmt.get(sessionId);
+  if (!row) return 0;
+  return Number(row.price_pence || 0);
+}
 
 app.listen(PORT, () => {
   console.log(`Server running on ${BASE_URL}`);
