@@ -43,6 +43,14 @@ body {
   max-width: 1080px;
 }
 
+.admin-panel {
+  margin-bottom: 16px;
+  padding: 18px;
+  border: 1px solid #e6e0d8;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fcfbf9 0%, #f6f2ec 100%);
+}
+
 .hero-top {
   display: flex;
   justify-content: space-between;
@@ -187,6 +195,14 @@ button:hover {
   background: var(--primary-dark);
 }
 
+.button-danger {
+  background: var(--danger);
+}
+
+.button-danger:hover {
+  background: #7f1717;
+}
+
 button:active {
   transform: translateY(1px);
 }
@@ -227,6 +243,19 @@ button:disabled {
 .message {
   margin-top: 12px;
   font-size: 14px;
+  color: var(--danger);
+}
+
+.message-admin {
+  min-height: 20px;
+  margin: 0 0 8px;
+}
+
+.message-admin.success {
+  color: var(--primary);
+}
+
+.message-admin.error {
   color: var(--danger);
 }
 
@@ -277,11 +306,19 @@ td.guest-cell {
   display: flex;
   gap: 12px;
   align-items: end;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-actions-top label {
+  min-width: min(100%, 280px);
 }
 
 .admin-actions label {
   flex: 1;
+}
+
+.admin-actions-manual label {
+  min-width: 180px;
 }
 
 .admin-header {
@@ -297,6 +334,49 @@ td.guest-cell {
   margin: 6px 0 0;
   color: var(--muted);
   font-size: 15px;
+}
+
+.admin-badge {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: #f1f6f4;
+  border: 1px solid #dbe8e3;
+  color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-empty {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px dashed #d9d4cd;
+  background: #faf8f4;
+  color: var(--muted);
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.row-actions button {
+  margin-top: 0;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f3f1ed;
+  border: 1px solid #e2ddd5;
+  font-size: 13px;
+  font-weight: 700;
+  color: #5f5a54;
 }
 
 @media (max-width: 640px) {
@@ -334,6 +414,24 @@ td.guest-cell {
 
   button {
     font-size: 17px;
+  }
+
+  .admin-panel {
+    padding: 16px;
+  }
+
+  .admin-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-actions label {
+    width: 100%;
+  }
+
+  .admin-actions button,
+  .row-actions button {
+    width: 100%;
   }
 
   .footer-note {
