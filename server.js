@@ -13,6 +13,9 @@ if (!process.env.STRIPE_SECRET_KEY) {
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+console.log("Stripe key prefix:", process.env.STRIPE_SECRET_KEY?.slice(0, 7));
+console.log("Stripe key suffix:", process.env.STRIPE_SECRET_KEY?.slice(-6));
+
 // -----------------------------
 // Config
 // -----------------------------
