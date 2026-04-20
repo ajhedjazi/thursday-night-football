@@ -60,7 +60,7 @@ const DEFAULT_SESSIONS = [
 // -----------------------------
 // Database
 // -----------------------------
-const dbPath = process.env.DB_PATH || "bookings.db";
+const dbPath = path.resolve(__dirname, process.env.DB_PATH || "bookings.db");
 const db = new Database(dbPath);
 
 // Create sessions table
@@ -74,6 +74,7 @@ db.exec(`
     price_pence INTEGER NOT NULL,
     capacity INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
+    is_featured INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `);
@@ -113,6 +114,10 @@ try {
   db.exec(`ALTER TABLE bookings ADD COLUMN is_credited INTEGER NOT NULL DEFAULT 0;`);
 } catch (e) {}
 
+try {
+  db.exec(`ALTER TABLE sessions ADD COLUMN is_featured INTEGER NOT NULL DEFAULT 0;`);
+} catch (e) {}
+
 // Prepared statements
 const insertSessionStmt = db.prepare(`
   INSERT OR IGNORE INTO sessions (
@@ -135,6 +140,13 @@ const getNextOpenSessionStmt = db.prepare(`
   LIMIT 1
 `);
 
+const getFeaturedSessionStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  WHERE is_featured = 1
+  LIMIT 1
+`);
+
 const getSessionByIdStmt = db.prepare(`
   SELECT *
   FROM sessions
@@ -154,6 +166,23 @@ const updateSessionStatusStmt = db.prepare(`
   UPDATE sessions
   SET status = ?
   WHERE id = ?
+`);
+
+const clearFeaturedSessionsStmt = db.prepare(`
+  UPDATE sessions
+  SET is_featured = 0
+`);
+
+const setFeaturedSessionStmt = db.prepare(`
+  UPDATE sessions
+  SET is_featured = 1
+  WHERE id = ?
+`);
+
+const listSessionsStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  ORDER BY date ASC, time ASC
 `);
 
 const countConfirmedBookingsStmt = db.prepare(`
@@ -239,6 +268,7 @@ function mapSessionRow(row) {
     pricePence: row.price_pence,
     capacity: row.capacity,
     status: row.status,
+    isFeatured: Boolean(row.is_featured),
     description: `${row.capacity} spaces • ${row.location} • ${row.time}`
   };
 }
@@ -264,6 +294,73 @@ function getNextAvailableSession() {
   const row = getNextOpenSessionStmt.get();
   if (!row) return null;
   return getAvailabilityForSession(row.id);
+}
+
+function getFeaturedAvailableSession() {
+  const featuredRow = getFeaturedSessionStmt.get();
+
+  if (featuredRow && featuredRow.status === "open") {
+    return getAvailabilityForSession(featuredRow.id);
+  }
+
+  if (featuredRow && featuredRow.status !== "open") {
+    clearFeaturedSessionsStmt.run();
+  }
+
+  const nextSession = getNextAvailableSession();
+
+  if (!nextSession) {
+    return null;
+  }
+
+  clearFeaturedSessionsStmt.run();
+  setFeaturedSessionStmt.run(nextSession.id);
+  return getAvailabilityForSession(nextSession.id);
+}
+
+function listSessionsWithAvailability() {
+  return listSessionsStmt.all().map((row) => getAvailabilityForSession(row.id));
+}
+
+function selectFeaturedSession(sessionId) {
+  const session = getAvailabilityForSession(sessionId);
+
+  if (!session) {
+    return null;
+  }
+
+  if (session.status !== "open") {
+    throw new Error("Only open sessions can be shown on the booking page.");
+  }
+
+  clearFeaturedSessionsStmt.run();
+  setFeaturedSessionStmt.run(session.id);
+  return getAvailabilityForSession(session.id);
+}
+
+function advanceFeaturedSession(currentSession) {
+  const nextSessionRow = currentSession
+    ? getNextOpenSessionAfterStmt.get(currentSession.date, currentSession.date, currentSession.time)
+    : null;
+  const nextSession = nextSessionRow
+    ? getAvailabilityForSession(nextSessionRow.id)
+    : getNextAvailableSession();
+
+  clearFeaturedSessionsStmt.run();
+
+  if (!nextSession) {
+    return null;
+  }
+
+  setFeaturedSessionStmt.run(nextSession.id);
+  return getAvailabilityForSession(nextSession.id);
+}
+
+if (!getFeaturedSessionStmt.get()) {
+  const nextSession = getNextAvailableSession();
+  if (nextSession) {
+    setFeaturedSessionStmt.run(nextSession.id);
+  }
 }
 
 function requireAdmin(req, res) {
@@ -445,7 +542,7 @@ app.use(express.static(path.join(__dirname, "public")));
 // Public routes
 // -----------------------------
 app.get("/api/session", (req, res) => {
-  const session = getNextAvailableSession();
+  const session = getFeaturedAvailableSession();
 
   if (!session) {
     return res.status(404).json({ error: "No open session available." });
@@ -480,7 +577,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
       return res.status(400).json({ error: "Invalid number of players." });
     }
 
-    const availability = getNextAvailableSession();
+    const availability = getFeaturedAvailableSession();
 
     if (!availability) {
       return res.status(400).json({ error: "No open session available." });
@@ -537,12 +634,14 @@ app.post("/api/create-checkout-session", async (req, res) => {
 app.get("/api/admin/bookings", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
-  const currentSession = getNextAvailableSession();
+  const currentSession = getFeaturedAvailableSession();
+  const sessions = listSessionsWithAvailability();
 
   if (!currentSession) {
     return res.json({
       session: null,
-      bookings: []
+      bookings: [],
+      sessions
     });
   }
 
@@ -550,32 +649,68 @@ app.get("/api/admin/bookings", (req, res) => {
 
   res.json({
     session: currentSession,
-    bookings
+    bookings,
+    sessions
   });
+});
+
+app.get("/api/admin/sessions", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const currentSession = getFeaturedAvailableSession();
+
+  res.json({
+    selectedSessionId: currentSession?.id || null,
+    sessions: listSessionsWithAvailability()
+  });
+});
+
+app.post("/api/admin/session/select", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const sessionId = String(req.body?.sessionId || "").trim();
+
+  if (!sessionId) {
+    return res.status(400).json({ error: "Session ID is required." });
+  }
+
+  try {
+    const session = selectFeaturedSession(sessionId);
+
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+
+    return res.json({ ok: true, session });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Could not select session." });
+  }
 });
 
 app.post("/api/admin/session/close", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
-  const currentSession = getNextAvailableSession();
+  const currentSession = getFeaturedAvailableSession();
   if (!currentSession) {
     return res.status(400).json({ error: "No open session available." });
   }
 
   updateSessionStatusStmt.run("closed", currentSession.id);
-  res.json({ ok: true });
+  const nextSession = advanceFeaturedSession(currentSession);
+  res.json({ ok: true, nextSession });
 });
 
 app.post("/api/admin/session/cancel", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
-  const currentSession = getNextAvailableSession();
+  const currentSession = getFeaturedAvailableSession();
   if (!currentSession) {
     return res.status(400).json({ error: "No open session available." });
   }
 
   updateSessionStatusStmt.run("cancelled", currentSession.id);
-  res.json({ ok: true });
+  const nextSession = advanceFeaturedSession(currentSession);
+  res.json({ ok: true, nextSession });
 });
 
 app.post("/api/admin/manual-booking", (req, res) => {
@@ -587,7 +722,7 @@ app.post("/api/admin/manual-booking", (req, res) => {
     return res.status(400).json({ error: "Name is required." });
   }
 
-  const currentSession = getNextAvailableSession();
+  const currentSession = getFeaturedAvailableSession();
   if (!currentSession) {
     return res.status(400).json({ error: "No open session available." });
   }
