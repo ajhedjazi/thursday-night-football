@@ -12,7 +12,7 @@
       <div class="admin-header">
         <div>
           <h1>Bookings admin</h1>
-          <p class="admin-subtitle">Manage bookings, session status, credits and refunds.</p>
+          <p class="admin-subtitle">Manage bookings, session status, credits and manual cash adds.</p>
         </div>
         <div class="admin-badge">Admin tools</div>
       </div>
@@ -25,22 +25,6 @@
           </label>
 
           <button id="load-btn" type="button">Load bookings</button>
-        </div>
-
-        <div class="admin-actions admin-actions-picker">
-          <label>
-            Booking page date
-            <input type="date" id="session-date-picker" />
-          </label>
-
-          <label>
-            Or choose session
-            <select id="session-select">
-              <option value="">Select a Thursday</option>
-            </select>
-          </label>
-
-          <button id="show-session-btn" type="button">Show on booking page</button>
         </div>
 
         <div class="admin-actions admin-actions-secondary">
@@ -76,7 +60,6 @@
 
   <script>
     const loadBtn = document.getElementById("load-btn");
-    const showSessionBtn = document.getElementById("show-session-btn");
     const closeSessionBtn = document.getElementById("close-session-btn");
     const cancelSessionBtn = document.getElementById("cancel-session-btn");
     const addManualBtn = document.getElementById("add-manual-btn");
@@ -84,13 +67,10 @@
     const summary = document.getElementById("summary");
     const flash = document.getElementById("flash");
     const passwordInput = document.getElementById("admin-password");
-    const sessionDatePicker = document.getElementById("session-date-picker");
-    const sessionSelect = document.getElementById("session-select");
     const manualNameInput = document.getElementById("manual-name");
     const manualEmailInput = document.getElementById("manual-email");
     const manualPhoneInput = document.getElementById("manual-phone");
-    const actionButtons = [loadBtn, showSessionBtn, closeSessionBtn, cancelSessionBtn, addManualBtn];
-    let availableSessions = [];
+    const actionButtons = [loadBtn, closeSessionBtn, cancelSessionBtn, addManualBtn];
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (char) => (
@@ -134,35 +114,6 @@
       results.innerHTML = `<div class="admin-empty">${escapeHtml(message)}</div>`;
     }
 
-    function formatSessionOption(session) {
-      const featured = session.isFeatured ? " | Live on site" : "";
-      const closed = session.status !== "open" ? ` | ${session.status}` : "";
-      return `${session.date} | ${session.time} | ${session.booked}/${session.capacity} booked${featured}${closed}`;
-    }
-
-    function syncSessionPicker(selectedSessionId) {
-      const selectableSessions = availableSessions.filter((session) => session.status === "open");
-
-      sessionSelect.innerHTML = `
-        <option value="">Select a Thursday</option>
-        ${selectableSessions.map((session) => `
-          <option value="${escapeHtml(session.id)}">${escapeHtml(formatSessionOption(session))}</option>
-        `).join("")}
-      `;
-
-      const selectedSession = selectableSessions.find((session) => session.id === selectedSessionId)
-        || selectableSessions.find((session) => session.isFeatured)
-        || selectableSessions[0];
-
-      sessionSelect.value = selectedSession ? selectedSession.id : "";
-      sessionDatePicker.value = selectedSession ? selectedSession.date : "";
-    }
-
-    function updateSessionControls(data) {
-      availableSessions = Array.isArray(data.sessions) ? data.sessions : [];
-      syncSessionPicker(data.session?.id || data.selectedSessionId || "");
-    }
-
     function renderBookings(data) {
       const rows = data.bookings.map((booking) => {
         let guests = [];
@@ -175,8 +126,6 @@
         const statusBits = [];
         if (booking.is_manual) statusBits.push("Manual");
         if (booking.is_credited) statusBits.push("Credited");
-        if (booking.payment_status === "refunded") statusBits.push("Refunded");
-
         const statusText = statusBits.join(", ") || "Paid";
 
         return `
@@ -191,7 +140,6 @@
             <td>
               <div class="row-actions">
                 <button type="button" onclick="giveCredit(${booking.id})">Give credit</button>
-                <button type="button" onclick="refundBooking(${booking.id})" class="button-danger">Refund</button>
               </div>
             </td>
           </tr>
@@ -261,8 +209,6 @@
           }
         });
 
-        updateSessionControls(data);
-
         if (!data.session) {
           summary.textContent = "No open session available.";
           renderEmptyState("There are no open sessions to manage right now.");
@@ -288,19 +234,6 @@
 
     loadBtn.addEventListener("click", loadBookings);
 
-    sessionDatePicker.addEventListener("change", () => {
-      const match = availableSessions.find((session) => (
-        session.status === "open" && session.date === sessionDatePicker.value
-      ));
-
-      sessionSelect.value = match ? match.id : "";
-    });
-
-    sessionSelect.addEventListener("change", () => {
-      const match = availableSessions.find((session) => session.id === sessionSelect.value);
-      sessionDatePicker.value = match ? match.date : "";
-    });
-
     passwordInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         loadBookings();
@@ -322,30 +255,8 @@
       );
     });
 
-    showSessionBtn.addEventListener("click", async () => {
-      const sessionId = sessionSelect.value.trim();
-
-      if (!sessionId) {
-        setFlash("Choose an open Thursday to show on the booking page.", "error");
-        sessionSelect.focus();
-        return;
-      }
-
-      await runAdminAction(
-        () => fetchJson("/api/admin/session/select", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-admin-password": getPassword()
-          },
-          body: JSON.stringify({ sessionId })
-        }),
-        "Booking page updated."
-      );
-    });
-
     cancelSessionBtn.addEventListener("click", async () => {
-      if (!confirm("Cancel the current session?")) return;
+      if (!confirm("Cancel the current session and move all paid players to the following Thursday?")) return;
 
       await runAdminAction(
         () => fetchJson("/api/admin/session/cancel", {
@@ -355,7 +266,7 @@
             "x-admin-password": getPassword()
           }
         }),
-        "Session cancelled."
+        "Session cancelled and players moved."
       );
     });
 
@@ -390,7 +301,7 @@
     });
 
     async function giveCredit(bookingId) {
-      if (!confirm("Give this booking credit for the next open session?")) return;
+      if (!confirm("Move this player to next week and free up their space in this week's game?")) return;
 
       await runAdminAction(
         () => fetchJson("/api/admin/booking/credit", {
@@ -401,28 +312,11 @@
           },
           body: JSON.stringify({ bookingId })
         }),
-        "Credit applied to next session."
-      );
-    }
-
-    async function refundBooking(bookingId) {
-      if (!confirm("Refund this booking?")) return;
-
-      await runAdminAction(
-        () => fetchJson("/api/admin/booking/refund", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-admin-password": getPassword()
-          },
-          body: JSON.stringify({ bookingId })
-        }),
-        "Booking marked as refunded."
+        "Player moved to next week and this week's space reopened."
       );
     }
 
     window.giveCredit = giveCredit;
-    window.refundBooking = refundBooking;
   </script>
 </body>
 </html>

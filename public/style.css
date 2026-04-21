@@ -321,10 +321,6 @@ td.guest-cell {
   min-width: 180px;
 }
 
-.admin-actions-picker label {
-  min-width: min(100%, 220px);
-}
-
 .admin-header {
   display: flex;
   justify-content: space-between;

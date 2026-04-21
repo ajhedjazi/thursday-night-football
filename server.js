@@ -22,6 +22,15 @@ console.log("Stripe key suffix:", process.env.STRIPE_SECRET_KEY?.slice(-6));
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "changeme123";
+const AUTO_GENERATE_WEEKS = Number(process.env.AUTO_GENERATE_WEEKS || 12);
+const DEFAULT_SESSION_TEMPLATE = {
+  title: "Thursday 7pm Kickabout",
+  time: "19:00",
+  location: "Goals / Astro Centre",
+  pricePence: 500,
+  capacity: 12,
+  status: "open"
+};
 
 // Seed a few Thursdays manually for now
 const DEFAULT_SESSIONS = [
@@ -162,6 +171,13 @@ const getNextOpenSessionAfterStmt = db.prepare(`
   LIMIT 1
 `);
 
+const getLatestSessionStmt = db.prepare(`
+  SELECT *
+  FROM sessions
+  ORDER BY date DESC, time DESC
+  LIMIT 1
+`);
+
 const updateSessionStatusStmt = db.prepare(`
   UPDATE sessions
   SET status = ?
@@ -179,17 +195,20 @@ const setFeaturedSessionStmt = db.prepare(`
   WHERE id = ?
 `);
 
-const listSessionsStmt = db.prepare(`
-  SELECT *
-  FROM sessions
-  ORDER BY date ASC, time ASC
-`);
+const ACTIVE_BOOKING_WHERE = `
+  payment_status = 'paid'
+    AND (
+      is_credited = 0
+      OR stripe_session_id LIKE 'credit-%'
+      OR stripe_session_id LIKE 'carry-%'
+    )
+`;
 
 const countConfirmedBookingsStmt = db.prepare(`
   SELECT COUNT(*) AS count
   FROM bookings
   WHERE session_id = ?
-    AND payment_status = 'paid'
+    AND ${ACTIVE_BOOKING_WHERE}
 `);
 
 const insertBookingStmt = db.prepare(`
@@ -239,6 +258,14 @@ const markBookingCreditedStmt = db.prepare(`
   WHERE id = ?
 `);
 
+const listActiveBookingsBySessionStmt = db.prepare(`
+  SELECT *
+  FROM bookings
+  WHERE session_id = ?
+    AND ${ACTIVE_BOOKING_WHERE}
+  ORDER BY id ASC
+`);
+
 // Seed default sessions
 for (const s of DEFAULT_SESSIONS) {
   insertSessionStmt.run(
@@ -252,6 +279,8 @@ for (const s of DEFAULT_SESSIONS) {
     s.status
   );
 }
+
+ensureFutureThursdaySessions();
 
 // -----------------------------
 // Helpers
@@ -296,7 +325,118 @@ function getNextAvailableSession() {
   return getAvailabilityForSession(row.id);
 }
 
+function parseIsoDate(dateString) {
+  const [year, month, day] = String(dateString || "").split("-").map(Number);
+  return new Date(Date.UTC(year, (month || 1) - 1, day || 1));
+}
+
+function addDays(dateString, days) {
+  const date = parseIsoDate(dateString);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getWeekdayUtc(dateString) {
+  return parseIsoDate(dateString).getUTCDay();
+}
+
+function toSessionId(dateString) {
+  return `thursday-${dateString}`;
+}
+
+function buildSessionSeed(dateString) {
+  return {
+    id: toSessionId(dateString),
+    title: DEFAULT_SESSION_TEMPLATE.title,
+    date: dateString,
+    time: DEFAULT_SESSION_TEMPLATE.time,
+    location: DEFAULT_SESSION_TEMPLATE.location,
+    pricePence: DEFAULT_SESSION_TEMPLATE.pricePence,
+    capacity: DEFAULT_SESSION_TEMPLATE.capacity,
+    status: DEFAULT_SESSION_TEMPLATE.status
+  };
+}
+
+function getAutoGenerationStartDate() {
+  const latestRow = getLatestSessionStmt.get();
+  if (latestRow?.date) {
+    return latestRow.date;
+  }
+
+  const todayIso = getLondonTodayIso();
+  let candidate = todayIso;
+
+  while (getWeekdayUtc(candidate) !== 4) {
+    candidate = addDays(candidate, 1);
+  }
+
+  return candidate;
+}
+
+function ensureFutureThursdaySessions(minOpenSessions = AUTO_GENERATE_WEEKS) {
+  let openCount = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM sessions
+    WHERE status = 'open'
+  `).get().count;
+
+  let cursorDate = getAutoGenerationStartDate();
+
+  while (openCount < minOpenSessions) {
+    cursorDate = addDays(cursorDate, 7);
+
+    if (getWeekdayUtc(cursorDate) !== 4) {
+      continue;
+    }
+
+    const session = buildSessionSeed(cursorDate);
+
+    insertSessionStmt.run(
+      session.id,
+      session.title,
+      session.date,
+      session.time,
+      session.location,
+      session.pricePence,
+      session.capacity,
+      session.status
+    );
+
+    const insertedRow = getSessionByIdStmt.get(session.id);
+    if (insertedRow?.status === "open") {
+      openCount += 1;
+    }
+  }
+}
+
+function getLondonTodayIso() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+function isSessionBookableToday(session, todayIso = getLondonTodayIso()) {
+  if (!session || session.status !== "open") {
+    return false;
+  }
+
+  return todayIso <= session.date;
+}
+
+function shouldArchiveSession(session, todayIso = getLondonTodayIso()) {
+  if (!session) {
+    return false;
+  }
+
+  const rolloverDate = addDays(session.date, 3);
+  return todayIso >= rolloverDate;
+}
+
 function getFeaturedAvailableSession() {
+  ensureFutureThursdaySessions();
   const featuredRow = getFeaturedSessionStmt.get();
 
   if (featuredRow && featuredRow.status === "open") {
@@ -318,24 +458,37 @@ function getFeaturedAvailableSession() {
   return getAvailabilityForSession(nextSession.id);
 }
 
-function listSessionsWithAvailability() {
-  return listSessionsStmt.all().map((row) => getAvailabilityForSession(row.id));
+function syncFeaturedSession(todayIso = getLondonTodayIso()) {
+  let featured = getFeaturedAvailableSession();
+
+  while (featured && shouldArchiveSession(featured, todayIso)) {
+    updateSessionStatusStmt.run("archived", featured.id);
+    featured = advanceFeaturedSession(featured);
+  }
+
+  return featured;
 }
 
-function selectFeaturedSession(sessionId) {
-  const session = getAvailabilityForSession(sessionId);
+function getPublicBookingSession() {
+  const todayIso = getLondonTodayIso();
+  const featured = syncFeaturedSession(todayIso);
 
-  if (!session) {
+  if (!featured || !isSessionBookableToday(featured, todayIso)) {
     return null;
   }
 
-  if (session.status !== "open") {
-    throw new Error("Only open sessions can be shown on the booking page.");
+  return featured;
+}
+
+function getPublicBookingErrorMessage() {
+  const todayIso = getLondonTodayIso();
+  const featured = syncFeaturedSession(todayIso);
+
+  if (featured && !isSessionBookableToday(featured, todayIso)) {
+    return "Bookings for next Thursday go live on Sunday.";
   }
 
-  clearFeaturedSessionsStmt.run();
-  setFeaturedSessionStmt.run(session.id);
-  return getAvailabilityForSession(session.id);
+  return "No open session available.";
 }
 
 function advanceFeaturedSession(currentSession) {
@@ -354,6 +507,136 @@ function advanceFeaturedSession(currentSession) {
 
   setFeaturedSessionStmt.run(nextSession.id);
   return getAvailabilityForSession(nextSession.id);
+}
+
+function moveCancelledBookingsToNextSession(currentSession, nextSession) {
+  const bookingsToMove = listActiveBookingsBySessionStmt.all(currentSession.id);
+
+  if (!bookingsToMove.length) {
+    return 0;
+  }
+
+  if (nextSession.remaining < bookingsToMove.length) {
+    throw new Error("Not enough spaces in the following week to move every player.");
+  }
+
+  const moveBookings = db.transaction(() => {
+    for (const booking of bookingsToMove) {
+      insertBookingStmt.run(
+        nextSession.id,
+        `carry-${Date.now()}-${booking.id}`,
+        "paid",
+        booking.customer_name,
+        booking.customer_email || "",
+        booking.customer_phone || "",
+        booking.player_count || 1,
+        booking.guest_names || JSON.stringify([]),
+        booking.is_manual || 0,
+        1
+      );
+
+      markBookingCreditedStmt.run(booking.id);
+    }
+  });
+
+  moveBookings();
+  return bookingsToMove.length;
+}
+
+function parsePlayersMetadata(rawPlayers) {
+  let players = [];
+
+  try {
+    players = JSON.parse(rawPlayers || "[]");
+  } catch (e) {
+    players = [];
+  }
+
+  return Array.isArray(players)
+    ? players.filter((p) => p && typeof p.name === "string" && p.name.trim())
+    : [];
+}
+
+function isTransferBookingRow(booking) {
+  return typeof booking?.stripe_session_id === "string" && (
+    booking.stripe_session_id.startsWith("credit-")
+    || booking.stripe_session_id.startsWith("carry-")
+  );
+}
+
+async function finalizeCheckoutSession(checkoutSession) {
+  const existing = findAnyBookingByStripeSessionStmt.get(checkoutSession.id);
+  if (existing) {
+    return { ok: true, inserted: false };
+  }
+
+  if (checkoutSession.payment_status !== "paid") {
+    return { ok: false, error: "Payment not completed." };
+  }
+
+  const bookingSessionId = checkoutSession.metadata?.sessionId;
+  if (!bookingSessionId) {
+    return { ok: false, error: "Missing booking session." };
+  }
+
+  const players = parsePlayersMetadata(checkoutSession.metadata?.players);
+  if (!players.length) {
+    return { ok: false, error: "No players found on payment." };
+  }
+
+  const bookedSession = getAvailabilityForSession(bookingSessionId);
+  if (!bookedSession) {
+    return { ok: false, error: "Booked session not found." };
+  }
+
+  if (bookedSession.booked + players.length > bookedSession.capacity) {
+    console.warn("Booking paid after session reached capacity:", checkoutSession.id);
+    return { ok: false, error: "Session is already full." };
+  }
+
+  const insertMany = db.transaction((playersToInsert) => {
+    for (const player of playersToInsert) {
+      insertBookingStmt.run(
+        bookingSessionId,
+        checkoutSession.id,
+        "paid",
+        player.name.trim(),
+        player.email || "",
+        player.phone || "",
+        1,
+        JSON.stringify([]),
+        0,
+        0
+      );
+    }
+  });
+
+  insertMany(players);
+
+  const leadPlayer = players[0];
+  if (leadPlayer?.email) {
+    try {
+      await sendConfirmationEmail({
+        name: leadPlayer.name,
+        email: leadPlayer.email,
+        session: bookedSession,
+        players
+      });
+    } catch (emailErr) {
+      console.error("Failed to send confirmation email:", emailErr.message);
+    }
+  }
+
+  return {
+    ok: true,
+    inserted: true,
+    session: getAvailabilityForSession(bookingSessionId)
+  };
+}
+
+async function finalizeCheckoutSessionById(checkoutSessionId) {
+  const checkoutSession = await stripe.checkout.sessions.retrieve(checkoutSessionId);
+  return finalizeCheckoutSession(checkoutSession);
 }
 
 if (!getFeaturedSessionStmt.get()) {
@@ -454,74 +737,7 @@ app.post(
     try {
       if (event.type === "checkout.session.completed") {
         const checkoutSession = event.data.object;
-
-        const existing = findAnyBookingByStripeSessionStmt.get(checkoutSession.id);
-        if (existing) {
-          return res.json({ received: true });
-        }
-
-        const bookingSessionId = checkoutSession.metadata?.sessionId;
-        if (!bookingSessionId) {
-          return res.json({ received: true });
-        }
-
-        let players = [];
-        try {
-          players = JSON.parse(checkoutSession.metadata?.players || "[]");
-        } catch (e) {
-          players = [];
-        }
-
-        players = Array.isArray(players)
-          ? players.filter((p) => p && typeof p.name === "string" && p.name.trim())
-          : [];
-
-        if (!players.length) {
-          return res.json({ received: true });
-        }
-
-        const bookedSession = getAvailabilityForSession(bookingSessionId);
-        if (!bookedSession) {
-          return res.json({ received: true });
-        }
-
-        if (bookedSession.booked + players.length > bookedSession.capacity) {
-          console.warn("Booking paid after session reached capacity:", checkoutSession.id);
-          return res.json({ received: true });
-        }
-
-        const insertMany = db.transaction((playersToInsert) => {
-          for (const player of playersToInsert) {
-            insertBookingStmt.run(
-              bookingSessionId,
-              checkoutSession.id,
-              "paid",
-              player.name.trim(),
-              player.email || "",
-              player.phone || "",
-              1,
-              JSON.stringify([]),
-              0,
-              0
-            );
-          }
-        });
-
-        insertMany(players);
-
-        const leadPlayer = players[0];
-        if (leadPlayer?.email) {
-          try {
-            await sendConfirmationEmail({
-              name: leadPlayer.name,
-              email: leadPlayer.email,
-              session: bookedSession,
-              players
-            });
-          } catch (emailErr) {
-            console.error("Failed to send confirmation email:", emailErr.message);
-          }
-        }
+        await finalizeCheckoutSession(checkoutSession);
       }
 
       return res.json({ received: true });
@@ -542,10 +758,10 @@ app.use(express.static(path.join(__dirname, "public")));
 // Public routes
 // -----------------------------
 app.get("/api/session", (req, res) => {
-  const session = getFeaturedAvailableSession();
+  const session = getPublicBookingSession();
 
   if (!session) {
-    return res.status(404).json({ error: "No open session available." });
+    return res.status(404).json({ error: getPublicBookingErrorMessage() });
   }
 
   res.json(session);
@@ -577,10 +793,10 @@ app.post("/api/create-checkout-session", async (req, res) => {
       return res.status(400).json({ error: "Invalid number of players." });
     }
 
-    const availability = getFeaturedAvailableSession();
+    const availability = getPublicBookingSession();
 
     if (!availability) {
-      return res.status(400).json({ error: "No open session available." });
+      return res.status(400).json({ error: getPublicBookingErrorMessage() });
     }
 
     if (availability.remaining < players.length) {
@@ -597,7 +813,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
-      success_url: `${BASE_URL}/success.html`,
+      success_url: `${BASE_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${BASE_URL}/cancel.html`,
       customer_email: players[0].email,
       line_items: [
@@ -628,20 +844,43 @@ app.post("/api/create-checkout-session", async (req, res) => {
   }
 });
 
+app.post("/api/checkout/confirm", async (req, res) => {
+  try {
+    const checkoutSessionId = String(req.body?.sessionId || "").trim();
+
+    if (!checkoutSessionId) {
+      return res.status(400).json({ error: "Checkout session ID is required." });
+    }
+
+    const result = await finalizeCheckoutSessionById(checkoutSessionId);
+
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error || "Could not confirm booking." });
+    }
+
+    return res.json({
+      ok: true,
+      inserted: result.inserted,
+      session: result.session || null
+    });
+  } catch (error) {
+    console.error("Checkout confirmation error:", error);
+    return res.status(500).json({ error: "Could not confirm booking." });
+  }
+});
+
 // -----------------------------
 // Admin routes
 // -----------------------------
 app.get("/api/admin/bookings", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
-  const currentSession = getFeaturedAvailableSession();
-  const sessions = listSessionsWithAvailability();
+  const currentSession = syncFeaturedSession();
 
   if (!currentSession) {
     return res.json({
       session: null,
-      bookings: [],
-      sessions
+      bookings: []
     });
   }
 
@@ -649,48 +888,15 @@ app.get("/api/admin/bookings", (req, res) => {
 
   res.json({
     session: currentSession,
-    bookings,
-    sessions
+    bookings
   });
-});
-
-app.get("/api/admin/sessions", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  const currentSession = getFeaturedAvailableSession();
-
-  res.json({
-    selectedSessionId: currentSession?.id || null,
-    sessions: listSessionsWithAvailability()
-  });
-});
-
-app.post("/api/admin/session/select", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  const sessionId = String(req.body?.sessionId || "").trim();
-
-  if (!sessionId) {
-    return res.status(400).json({ error: "Session ID is required." });
-  }
-
-  try {
-    const session = selectFeaturedSession(sessionId);
-
-    if (!session) {
-      return res.status(404).json({ error: "Session not found." });
-    }
-
-    return res.json({ ok: true, session });
-  } catch (error) {
-    return res.status(400).json({ error: error.message || "Could not select session." });
-  }
 });
 
 app.post("/api/admin/session/close", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
-  const currentSession = getFeaturedAvailableSession();
+  ensureFutureThursdaySessions();
+  const currentSession = syncFeaturedSession();
   if (!currentSession) {
     return res.status(400).json({ error: "No open session available." });
   }
@@ -703,13 +909,36 @@ app.post("/api/admin/session/close", (req, res) => {
 app.post("/api/admin/session/cancel", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
-  const currentSession = getFeaturedAvailableSession();
+  ensureFutureThursdaySessions();
+  const currentSession = syncFeaturedSession();
   if (!currentSession) {
     return res.status(400).json({ error: "No open session available." });
   }
 
+  const nextSessionRow = getNextOpenSessionAfterStmt.get(
+    currentSession.date,
+    currentSession.date,
+    currentSession.time
+  );
+
+  if (!nextSessionRow) {
+    return res.status(400).json({ error: "No following open session available." });
+  }
+
+  const nextSession = getAvailabilityForSession(nextSessionRow.id);
+  if (!nextSession) {
+    return res.status(400).json({ error: "Next session not found." });
+  }
+
+  try {
+    moveCancelledBookingsToNextSession(currentSession, nextSession);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Could not move players." });
+  }
+
   updateSessionStatusStmt.run("cancelled", currentSession.id);
-  const nextSession = advanceFeaturedSession(currentSession);
+  clearFeaturedSessionsStmt.run();
+  setFeaturedSessionStmt.run(nextSession.id);
   res.json({ ok: true, nextSession });
 });
 
@@ -722,7 +951,7 @@ app.post("/api/admin/manual-booking", (req, res) => {
     return res.status(400).json({ error: "Name is required." });
   }
 
-  const currentSession = getFeaturedAvailableSession();
+  const currentSession = getPublicBookingSession();
   if (!currentSession) {
     return res.status(400).json({ error: "No open session available." });
   }
@@ -806,6 +1035,7 @@ app.post("/api/admin/booking/refund", async (req, res) => {
 app.post("/api/admin/booking/credit", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
+  ensureFutureThursdaySessions();
   const { bookingId } = req.body || {};
   const booking = getBookingByIdStmt.get(bookingId);
 
@@ -813,7 +1043,7 @@ app.post("/api/admin/booking/credit", (req, res) => {
     return res.status(404).json({ error: "Booking not found." });
   }
 
-  if (booking.is_credited) {
+  if (booking.is_credited && !isTransferBookingRow(booking)) {
     return res.status(400).json({ error: "Booking already credited." });
   }
 
