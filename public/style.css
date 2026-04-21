@@ -436,6 +436,10 @@ td.guest-cell {
   flex-wrap: wrap;
 }
 
+.admin-actions-secondary {
+  margin-top: 6px;
+}
+
 .admin-actions-top label {
   min-width: min(100%, 280px);
 }
