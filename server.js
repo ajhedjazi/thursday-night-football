@@ -675,7 +675,7 @@ const transporter = nodemailer.createTransport({
 });
 
 async function sendConfirmationEmail({ name, email, session, players }) {
-  const subject = `You're booked ⚽ ${session.title}`;
+  const subject = `Booking confirmed - ${session.title}`;
 
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
@@ -683,28 +683,32 @@ async function sendConfirmationEmail({ name, email, session, players }) {
     subject,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto; padding: 20px;">
-        <h2 style="margin-bottom: 10px;">You're in ⚽</h2>
+        <h2 style="margin-bottom: 10px;">Your booking is confirmed</h2>
 
         <p style="margin: 0 0 16px;">
-          Hi ${name}, your spot is confirmed.
+          Hi ${name}, your place for Thursday football is confirmed.
         </p>
 
         <div style="padding: 16px; border-radius: 12px; background: #f5f3ef; border: 1px solid #e2ddd5; margin-bottom: 16px;">
           <strong>${session.title}</strong><br/>
-          ${session.date}<br/>
-          ${session.time}<br/>
-          ${session.location}<br/>
+          Date: ${session.date}<br/>
+          Time: ${session.time}<br/>
+          Venue: ${session.location}<br/>
           Players booked: ${players.length}
         </div>
 
         <p><strong>Players:</strong><br/>${players.map((p) => p.name).join("<br/>")}</p>
 
         <p style="margin-top: 16px;">
-          If you can't make it, let me know early and I’ll try to fill your spot.
+          If you cannot make it, let me know as early as possible and I will try to fill your spot.
+        </p>
+
+        <p style="margin-top: 16px; padding: 14px 16px; border-radius: 12px; background: #edf6eb; border: 1px solid #cfe0cf; color: #214933;">
+          If you do not see future emails from us, please check your junk or spam folder and mark them as safe.
         </p>
 
         <p style="margin-top: 24px; color: #6b6b6b;">
-          See you there ⚽
+          See you there.
         </p>
       </div>
     `
